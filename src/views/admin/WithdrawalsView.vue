@@ -1,26 +1,43 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { adminApi } from '@/api/admin'
 import type { Withdrawal } from '@/types'
 
 const withdrawals = ref<Withdrawal[]>([])
 const loading = ref(true)
+const hasError = ref(false)
 const statusFilter = ref('pending')
 const actingId = ref<number | null>(null)
 
-const statusClasses: Record<string, string> = {
-  pending: 'bg-primary-50 text-primary-700',
-  approved: 'bg-amber-50 text-amber-600',
-  paid: 'bg-success-bg text-success',
-  rejected: 'bg-danger-bg text-danger',
+const statusLabels: Record<string, string> = {
+  pending: 'Kutilmoqda',
+  approved: 'Tasdiqlandi',
+  paid: "To'landi",
+  rejected: 'Rad etildi',
+}
+
+const statusVariants: Record<string, 'primary' | 'warning' | 'success' | 'danger'> = {
+  pending: 'primary',
+  approved: 'warning',
+  paid: 'success',
+  rejected: 'danger',
 }
 
 async function load() {
   loading.value = true
-  const { data } = await adminApi.withdrawals({ status: statusFilter.value || undefined })
-  withdrawals.value = data.data
-  loading.value = false
+  hasError.value = false
+  try {
+    const { data } = await adminApi.withdrawals({ status: statusFilter.value || undefined })
+    withdrawals.value = data.data
+  } catch {
+    hasError.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 async function approve(withdrawal: Withdrawal) {
@@ -54,7 +71,7 @@ onMounted(load)
 
     <select
       v-model="statusFilter"
-      class="h-10 px-3 rounded-xl border border-border bg-white text-sm outline-none mb-5"
+      class="h-10 px-3 rounded-xl border border-border bg-surface text-sm outline-none mb-5"
       @change="load"
     >
       <option value="">Barchasi</option>
@@ -64,7 +81,8 @@ onMounted(load)
     </select>
 
     <div class="card overflow-hidden">
-      <table class="w-full text-sm">
+      <div class="overflow-x-auto">
+      <table class="w-full text-sm min-w-[640px]">
         <thead>
           <tr class="border-b border-border text-left text-ink-faint">
             <th class="px-5 py-3 font-medium">Foydalanuvchi</th>
@@ -76,7 +94,10 @@ onMounted(load)
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="5" class="px-5 py-8 text-center text-ink-faint">Yuklanmoqda...</td>
+            <td colspan="5" class="px-5 py-3" v-for="i in 5" :key="i"><Skeleton variant="text" width="80%" /></td>
+          </tr>
+          <tr v-else-if="hasError">
+            <td colspan="5" class="px-5 py-8"><ErrorState @retry="load" /></td>
           </tr>
           <tr v-else-if="withdrawals.length === 0">
             <td colspan="5" class="px-5 py-8 text-center text-ink-faint">So'rovlar yo'q.</td>
@@ -90,9 +111,7 @@ onMounted(load)
             <td class="px-5 py-3 font-semibold text-ink">{{ withdrawal.amount.toLocaleString() }} UZS</td>
             <td class="px-5 py-3 text-ink-muted">{{ new Date(withdrawal.created_at).toLocaleDateString('uz-UZ') }}</td>
             <td class="px-5 py-3">
-              <span class="text-xs font-semibold px-2.5 py-1 rounded-full" :class="statusClasses[withdrawal.status]">
-                {{ withdrawal.status }}
-              </span>
+              <StatusBadge :status="withdrawal.status" :labels="statusLabels" :variants="statusVariants" />
             </td>
             <td class="px-5 py-3 text-right space-x-3" v-if="withdrawal.status === 'pending'">
               <button
@@ -114,6 +133,7 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   </AdminLayout>
 </template>

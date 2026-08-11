@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { adminApi } from '@/api/admin'
+import { icons } from '@/lib/icons'
 import type { Report } from '@/types'
 
 const reports = ref<Report[]>([])
 const loading = ref(true)
+const hasError = ref(false)
 const statusFilter = ref('pending')
 const actingId = ref<number | null>(null)
 
@@ -20,18 +26,31 @@ const reasonLabels: Record<string, string> = {
   other: 'Boshqa',
 }
 
-const statusClasses: Record<string, string> = {
-  pending: 'bg-primary-50 text-primary-700',
-  reviewed: 'bg-amber-50 text-amber-600',
-  resolved: 'bg-success-bg text-success',
-  dismissed: 'bg-surface-muted text-ink-muted',
+const statusLabels: Record<string, string> = {
+  pending: 'Kutilmoqda',
+  reviewed: "Ko'rib chiqilmoqda",
+  resolved: 'Hal qilindi',
+  dismissed: 'Rad etildi',
+}
+
+const statusVariants: Record<string, 'primary' | 'warning' | 'success' | 'neutral'> = {
+  pending: 'primary',
+  reviewed: 'warning',
+  resolved: 'success',
+  dismissed: 'neutral',
 }
 
 async function load() {
   loading.value = true
-  const { data } = await adminApi.reports({ status: statusFilter.value || undefined })
-  reports.value = data.data
-  loading.value = false
+  hasError.value = false
+  try {
+    const { data } = await adminApi.reports({ status: statusFilter.value || undefined })
+    reports.value = data.data
+  } catch {
+    hasError.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 async function resolve(report: Report, status: 'resolved' | 'dismissed') {
@@ -54,7 +73,7 @@ onMounted(load)
 
     <select
       v-model="statusFilter"
-      class="h-10 px-3 rounded-xl border border-border bg-white text-sm outline-none mb-5"
+      class="h-10 px-3 rounded-xl border border-border bg-surface text-sm outline-none mb-5"
       @change="load"
     >
       <option value="">Barchasi</option>
@@ -64,8 +83,16 @@ onMounted(load)
       <option value="dismissed">Rad etildi</option>
     </select>
 
-    <div v-if="loading" class="text-ink-faint text-sm">Yuklanmoqda...</div>
-    <div v-else-if="reports.length === 0" class="text-ink-faint text-sm">Shikoyatlar yo'q.</div>
+    <div v-if="loading" class="space-y-3">
+      <div v-for="i in 3" :key="i" class="card p-5 space-y-2">
+        <Skeleton variant="text" width="40%" />
+        <Skeleton variant="text" width="60%" />
+      </div>
+    </div>
+
+    <ErrorState v-else-if="hasError" @retry="load" />
+
+    <EmptyState v-else-if="reports.length === 0" :icon="icons.report" title="Shikoyatlar yo'q" />
 
     <div v-else class="space-y-3">
       <div v-for="report in reports" :key="report.id" class="card p-5">
@@ -73,9 +100,7 @@ onMounted(load)
           <RouterLink :to="{ name: 'user-profile', params: { id: report.reported_user.id } }" class="font-semibold text-ink hover:text-primary-600">
             {{ report.reported_user.name }}
           </RouterLink>
-          <span class="text-xs font-semibold px-2.5 py-1 rounded-full" :class="statusClasses[report.status]">
-            {{ report.status }}
-          </span>
+          <StatusBadge :status="report.status" :labels="statusLabels" :variants="statusVariants" />
         </div>
         <p class="text-sm text-primary-600 font-medium mb-1">{{ reasonLabels[report.reason] ?? report.reason }}</p>
         <p v-if="report.description" class="text-sm text-ink-muted mb-3">{{ report.description }}</p>

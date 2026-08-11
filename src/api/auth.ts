@@ -25,4 +25,7 @@ export const authApi = {
   me() {
     return client.get<{ data: User }>('/me')
   },
+  deleteAccount(password: string) {
+    return client.delete<{ message: string }>('/me', { data: { password } })
+  },
 }

@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
+import { icons } from '@/lib/icons'
 import { useAuthStore } from '@/stores/auth'
 import { profileApi } from '@/api/profile'
+import { locationsApi } from '@/api/locations'
 import { extractErrorMessage } from '@/composables/useApiError'
+import type { District, Region } from '@/types'
 
-const router = useRouter()
 const auth = useAuthStore()
 
 const editing = ref(false)
@@ -17,10 +18,20 @@ const error = ref('')
 const avatarFile = ref<File | null>(null)
 const avatarPreview = ref<string | null>(null)
 
+const editingLocation = ref(false)
+const savingLocation = ref(false)
+const locationError = ref('')
+const regions = ref<Region[]>([])
+const districts = ref<District[]>([])
+const regionId = ref<number | null>(null)
+const districtId = ref<number | null>(null)
+const currentRegionName = ref<string | null>(null)
+const currentDistrictName = ref<string | null>(null)
+
 const form = reactive({
   name: auth.user?.name ?? '',
   bio: auth.user?.profile.bio ?? '',
-  age: auth.user?.profile.age ?? undefined,
+  age: auth.user?.profile.age ?? '',
   location_name: auth.user?.profile.location_name ?? '',
 })
 
@@ -51,13 +62,51 @@ async function save() {
   }
 }
 
-async function logout() {
-  await auth.logout()
-  router.push({ name: 'welcome' })
+async function loadDistricts(id: number) {
+  const { data } = await locationsApi.districts(id)
+  districts.value = data.data
+}
+
+async function onRegionChange() {
+  districtId.value = null
+  if (regionId.value) await loadDistricts(regionId.value)
+}
+
+async function startEditLocation() {
+  editingLocation.value = true
+  if (regions.value.length === 0) {
+    const { data } = await locationsApi.regions()
+    regions.value = data.data
+  }
+  if (regionId.value) await loadDistricts(regionId.value)
+}
+
+async function saveLocation() {
+  locationError.value = ''
+  savingLocation.value = true
+  try {
+    const { data } = await locationsApi.updateMe({
+      region_id: regionId.value,
+      district_id: districtId.value ?? undefined,
+    })
+    currentRegionName.value = data.data.region?.name ?? null
+    currentDistrictName.value = data.data.district?.name ?? null
+    editingLocation.value = false
+  } catch (e) {
+    locationError.value = extractErrorMessage(e)
+  } finally {
+    savingLocation.value = false
+  }
 }
 
 onMounted(async () => {
   await auth.fetchMe()
+
+  const { data } = await locationsApi.me()
+  regionId.value = data.data.region?.id ?? null
+  districtId.value = data.data.district?.id ?? null
+  currentRegionName.value = data.data.region?.name ?? null
+  currentDistrictName.value = data.data.district?.name ?? null
 })
 </script>
 
@@ -77,21 +126,24 @@ onMounted(async () => {
           <span
             v-if="editing"
             class="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-primary-600 text-white flex items-center justify-center text-xs"
-            >✎</span
           >
+            <FontAwesomeIcon :icon="icons.edit" />
+          </span>
           <input v-if="editing" type="file" accept="image/*" class="hidden" @change="onAvatarChange" />
         </label>
 
         <h1 class="text-lg font-bold text-ink mt-3 flex items-center justify-center gap-1.5">
           {{ auth.user?.name }}
-          <span v-if="auth.user?.identity_verified" class="text-primary-500 text-sm">✓</span>
+          <FontAwesomeIcon v-if="auth.user?.identity_verified" :icon="icons.verified" class="text-primary-500 text-sm" />
         </h1>
         <p class="text-sm text-ink-muted">{{ auth.user?.phone }}</p>
 
         <div class="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border">
           <div>
             <p class="font-bold text-ink">{{ auth.user?.rating_average ?? '—' }}</p>
-            <p class="text-xs text-ink-muted">⭐ Reyting</p>
+            <p class="text-xs text-ink-muted flex items-center justify-center gap-1">
+              <FontAwesomeIcon :icon="icons.starSolid" class="text-star" /> Reyting
+            </p>
           </div>
           <div>
             <p class="font-bold text-ink">{{ auth.user?.completed_activities_count ?? 0 }}</p>
@@ -101,6 +153,16 @@ onMounted(async () => {
             <p class="font-bold text-ink">{{ auth.user?.reviews_count ?? 0 }}</p>
             <p class="text-xs text-ink-muted">Sharhlar</p>
           </div>
+        </div>
+
+        <div
+          v-if="auth.user?.trust_score !== undefined"
+          class="mt-4 pt-4 border-t border-border flex items-center justify-center gap-2"
+        >
+          <span class="text-sm text-ink-muted flex items-center gap-1.5">
+            <FontAwesomeIcon :icon="icons.trust" /> Trust score
+          </span>
+          <span class="text-sm font-bold text-primary-600">{{ auth.user.trust_score }}%</span>
         </div>
       </div>
 
@@ -132,23 +194,69 @@ onMounted(async () => {
 
         <div v-else class="space-y-2 text-sm">
           <p v-if="auth.user?.profile.bio" class="text-ink-secondary">{{ auth.user.profile.bio }}</p>
-          <p v-if="auth.user?.profile.location_name" class="text-ink-muted">📍 {{ auth.user.profile.location_name }}</p>
+          <p v-if="auth.user?.profile.location_name" class="text-ink-muted flex items-center gap-1.5">
+            <FontAwesomeIcon :icon="icons.location" class="text-ink-faint text-xs" /> {{ auth.user.profile.location_name }}
+          </p>
           <p v-if="auth.user?.profile.age" class="text-ink-muted">{{ auth.user.profile.age }} yosh</p>
         </div>
       </div>
 
-      <div class="mt-4 space-y-2">
-        <RouterLink to="/wallet" class="card p-4 flex items-center justify-between">
-          <span class="font-medium text-ink">💳 Hamyon</span>
-          <span class="text-ink-faint">›</span>
-        </RouterLink>
-        <RouterLink to="/blocked-users" class="card p-4 flex items-center justify-between">
-          <span class="font-medium text-ink">🚫 Bloklangan foydalanuvchilar</span>
-          <span class="text-ink-faint">›</span>
-        </RouterLink>
+      <div class="card p-5 mt-4">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold text-ink">Joylashuv</h2>
+          <button class="text-sm text-primary-600 font-medium" @click="editingLocation ? (editingLocation = false) : startEditLocation()">
+            {{ editingLocation ? 'Bekor qilish' : "Tahrirlash" }}
+          </button>
+        </div>
+
+        <div v-if="editingLocation" class="space-y-4">
+          <label class="block">
+            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Viloyat</span>
+            <select
+              v-model.number="regionId"
+              class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
+              @change="onRegionChange"
+            >
+              <option :value="null" disabled>Viloyatni tanlang</option>
+              <option v-for="r in regions" :key="r.id" :value="r.id">{{ r.name }}</option>
+            </select>
+          </label>
+
+          <label class="block">
+            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Tuman</span>
+            <select
+              v-model.number="districtId"
+              :disabled="!regionId"
+              class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100 disabled:bg-surface-muted disabled:text-ink-faint"
+            >
+              <option :value="null">Tuman tanlanmagan</option>
+              <option v-for="d in districts" :key="d.id" :value="d.id">{{ d.name }}</option>
+            </select>
+          </label>
+
+          <p v-if="locationError" class="text-sm text-danger">{{ locationError }}</p>
+
+          <AppButton :loading="savingLocation" @click="saveLocation">Saqlash</AppButton>
+        </div>
+
+        <div v-else class="text-sm">
+          <p v-if="currentRegionName" class="text-ink-muted flex items-center gap-1.5">
+            <FontAwesomeIcon :icon="icons.location" class="text-ink-faint text-xs" />
+            {{ currentRegionName }}<span v-if="currentDistrictName">, {{ currentDistrictName }}</span>
+          </p>
+          <p v-else class="text-ink-faint">Joylashuv tanlanmagan</p>
+        </div>
       </div>
 
-      <AppButton variant="ghost" class="mt-6" @click="logout">Chiqish</AppButton>
+      <div class="mt-4">
+        <RouterLink to="/settings" class="card card-hover p-4 flex items-center justify-between">
+          <span class="font-medium text-ink flex items-center gap-2.5">
+            <FontAwesomeIcon :icon="icons.settings" class="text-ink-faint w-4" />
+            Sozlamalar
+          </span>
+          <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+        </RouterLink>
+      </div>
     </div>
   </AppLayout>
 </template>

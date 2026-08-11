@@ -3,9 +3,13 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import ReportBlockMenu from '@/components/profile/ReportBlockMenu.vue'
+import Avatar from '@/components/ui/Avatar.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { matchesApi } from '@/api/matches'
 import { useAuthStore } from '@/stores/auth'
 import { getEcho } from '@/composables/useEcho'
+import { icons } from '@/lib/icons'
 import type { ActivityMatch, Message } from '@/types'
 
 const route = useRoute()
@@ -17,6 +21,7 @@ const match = ref<ActivityMatch | null>(null)
 const messages = ref<Message[]>([])
 const body = ref('')
 const loading = ref(true)
+const hasError = ref(false)
 const scrollArea = ref<HTMLElement | null>(null)
 
 function otherPerson() {
@@ -65,28 +70,37 @@ async function send() {
   }
 }
 
-onMounted(async () => {
-  const [matchRes, messagesRes] = await Promise.all([
-    matchesApi.show(matchId.value),
-    matchesApi.messages(matchId.value),
-  ])
-  match.value = matchRes.data.data
-  messages.value = messagesRes.data.data
-  loading.value = false
-  scrollToBottom()
+async function load() {
+  loading.value = true
+  hasError.value = false
+  try {
+    const [matchRes, messagesRes] = await Promise.all([
+      matchesApi.show(matchId.value),
+      matchesApi.messages(matchId.value),
+    ])
+    match.value = matchRes.data.data
+    messages.value = messagesRes.data.data
+    scrollToBottom()
 
-  matchesApi.markRead(matchId.value)
+    matchesApi.markRead(matchId.value)
 
-  getEcho()
-    .private(`match.${matchId.value}`)
-    .listen('.MessageSent', (message: Message) => {
-      if (!messages.value.some((m) => m.id === message.id)) {
-        messages.value.push(message)
-        scrollToBottom()
-        if (message.sender.id !== auth.user?.id) matchesApi.markRead(matchId.value)
-      }
-    })
-})
+    getEcho()
+      .private(`match.${matchId.value}`)
+      .listen('.MessageSent', (message: Message) => {
+        if (!messages.value.some((m) => m.id === message.id)) {
+          messages.value.push(message)
+          scrollToBottom()
+          if (message.sender.id !== auth.user?.id) matchesApi.markRead(matchId.value)
+        }
+      })
+  } catch {
+    hasError.value = true
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(load)
 
 onUnmounted(() => {
   getEcho().leave(`match.${matchId.value}`)
@@ -95,15 +109,24 @@ onUnmounted(() => {
 
 <template>
   <AppLayout>
-    <div v-if="loading" class="p-8 text-center text-ink-faint">Yuklanmoqda...</div>
+    <div v-if="loading" class="flex flex-col h-[calc(100vh-64px)] md:h-screen">
+      <div class="flex items-center gap-3 px-4 md:px-8 py-3 border-b border-border bg-surface">
+        <Skeleton variant="circle" width="2.5rem" height="2.5rem" />
+        <div class="flex-1 space-y-1.5">
+          <Skeleton variant="text" width="30%" />
+          <Skeleton variant="text" width="50%" />
+        </div>
+      </div>
+    </div>
+
+    <ErrorState v-else-if="hasError" @retry="load" />
 
     <div v-else class="flex flex-col h-[calc(100vh-64px)] md:h-screen">
-      <div class="flex items-center gap-3 px-4 md:px-8 py-3 border-b border-border bg-white">
-        <button class="text-ink-muted text-xl md:hidden" @click="router.push({ name: 'chats' })">←</button>
-        <div class="w-10 h-10 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center font-semibold overflow-hidden">
-          <img v-if="otherPerson()?.profile.avatar_url" :src="otherPerson()!.profile.avatar_url!" class="w-full h-full object-cover" />
-          <span v-else>{{ otherPerson()?.name[0] }}</span>
-        </div>
+      <div class="flex items-center gap-3 px-4 md:px-8 py-3 border-b border-border bg-surface">
+        <button class="text-ink-muted text-lg md:hidden" @click="router.push({ name: 'chats' })">
+          <FontAwesomeIcon :icon="icons.back" />
+        </button>
+        <Avatar :src="otherPerson()?.profile.avatar_url" :name="otherPerson()?.name ?? ''" />
         <div class="min-w-0 flex-1">
           <p class="font-semibold text-ink">{{ otherPerson()?.name }}</p>
           <p class="text-xs text-ink-muted truncate">{{ match?.activity.title }}</p>
@@ -134,7 +157,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="px-4 md:px-8 py-3 border-t border-border bg-white flex items-center gap-2">
+      <div class="px-4 md:px-8 py-3 border-t border-border bg-surface flex items-center gap-2">
         <input
           v-model="body"
           type="text"
@@ -147,7 +170,7 @@ onUnmounted(() => {
           :disabled="!body.trim()"
           @click="send"
         >
-          ➤
+          <FontAwesomeIcon :icon="icons.send" class="text-sm" />
         </button>
       </div>
     </div>

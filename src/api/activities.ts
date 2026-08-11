@@ -1,5 +1,5 @@
 import client from './client'
-import type { Activity, PaginatedResponse, Payment } from '@/types'
+import type { Activity, PaginatedResponse } from '@/types'
 
 export interface ActivityFilters {
   q?: string
@@ -9,6 +9,8 @@ export interface ActivityFilters {
   min_amount?: number
   max_amount?: number
   verified_only?: boolean
+  region_id?: number
+  district_id?: number
   lat?: number
   lng?: number
   radius_km?: number
@@ -21,6 +23,8 @@ export interface CreateActivityPayload {
   category_id: number
   description?: string
   location_name: string
+  region_id: number
+  district_id?: number
   latitude?: number
   longitude?: number
   start_at: string
@@ -31,7 +35,7 @@ export interface CreateActivityPayload {
   image?: File
 }
 
-function toFormData(payload: Record<string, unknown>) {
+function toFormData<T extends object>(payload: T) {
   const formData = new FormData()
   Object.entries(payload).forEach(([key, value]) => {
     if (value === undefined || value === null) return
@@ -61,17 +65,14 @@ export const activitiesApi = {
   cancel(id: number) {
     return client.post<{ data: Activity }>(`/activities/${id}/cancel`)
   },
-  complete(id: number) {
-    return client.post<{ data: Activity }>(`/activities/${id}/complete`)
-  },
   destroy(id: number) {
     return client.delete(`/activities/${id}`)
   },
-  pay(id: number, recipientId?: number) {
-    return client.post<{ data: Payment }>(`/activities/${id}/pay`, { recipient_id: recipientId })
+  confirmCompletion(id: number) {
+    return client.post<{ data: Activity }>(`/activities/${id}/confirm-completion`)
   },
-  myPayment(id: number) {
-    return client.get<{ data: Payment | null }>(`/activities/${id}/payment`)
+  confirmParticipantCompletion(participantId: number) {
+    return client.post<{ data: Activity }>(`/activity-participants/${participantId}/confirm-completion`)
   },
   review(id: number, payload: { reviewee_id: number; rating?: number; comment?: string; is_no_show?: boolean }) {
     return client.post(`/activities/${id}/review`, payload)

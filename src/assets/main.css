@@ -2,7 +2,10 @@
 
 @theme {
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Inter', ui-sans-serif, system-ui, sans-serif;
+    'Inter', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
+
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1200px;
 
   --color-primary-50: #f2f1f8;
   --color-primary-100: #f1effe;
@@ -22,6 +25,8 @@
 
   --color-success: #17a673;
   --color-success-bg: #e8f8f1;
+  --color-warning: #b45309;
+  --color-warning-bg: #fef3e2;
   --color-danger: #e23f3f;
   --color-danger-bg: #fdecec;
   --color-star: #f5a623;
@@ -30,11 +35,45 @@
   --color-surface-muted: #f7f7fb;
   --color-border: #ecebf3;
 
-  --shadow-card: 0 1px 2px rgba(16, 12, 48, 0.04), 0 4px 16px rgba(16, 12, 48, 0.06);
+  --shadow-sm: 0 1px 2px rgba(16, 12, 48, 0.04);
+  --shadow-card: 0 1px 2px rgba(91, 79, 229, 0.05), 0 4px 16px rgba(91, 79, 229, 0.08);
+  --shadow-lg: 0 8px 24px rgba(91, 79, 229, 0.14), 0 2px 6px rgba(91, 79, 229, 0.08);
+
+  --color-primary-border: rgba(91, 79, 229, 0.32);
+  --color-primary-border-hover: rgba(91, 79, 229, 0.6);
 }
 
 :root {
   color-scheme: light;
+}
+
+/* Dark mode: redefining the same custom properties means every existing
+   bg-surface/text-ink/border-border utility automatically follows, with no
+   dark: variant needed anywhere. Deliberately NOT wired to
+   prefers-color-scheme yet -- most pages still use raw un-tokenized Tailwind
+   gray/white classes (tracked across the redesign phases), so auto-enabling
+   dark mode today would make that raw-color text unreadable. Opt-in only via
+   data-theme="dark" until a real toggle + full page migration exists. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-primary-50: #221f3a;
+
+  --color-ink: #f4f4f8;
+  --color-ink-secondary: #c8c8d6;
+  --color-ink-muted: #8f8fa3;
+  --color-ink-faint: #6a6a7d;
+
+  --color-success-bg: #113328;
+  --color-warning-bg: #3a2a10;
+  --color-danger-bg: #3a1414;
+
+  --color-surface: #1a1a24;
+  --color-surface-muted: #121218;
+  --color-border: #2a2a38;
+
+  --color-primary-border: rgba(139, 127, 240, 0.42);
+  --color-primary-border-hover: rgba(139, 127, 240, 0.75);
 }
 
 body {
@@ -48,6 +87,135 @@ body {
   .card {
     background-color: var(--color-surface);
     border-radius: 1rem;
+    border: 1px solid var(--color-primary-border);
     box-shadow: var(--shadow-card);
   }
+
+  .card-hover {
+    transition:
+      transform 0.2s ease,
+      box-shadow 0.2s ease,
+      border-color 0.2s ease;
+  }
+
+  .card-hover:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-lg);
+    border-color: var(--color-primary-border-hover);
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  animation: shimmer 1.6s infinite;
+}
+
+:root[data-theme='dark'] .skeleton-shimmer::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+}
+
+/* Vue <Transition> hooks used across modals/drawers/dropdowns/route changes */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.page-enter-active,
+.page-leave-active {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.overlay-enter-active,
+.overlay-leave-active {
+  transition: opacity 0.2s ease;
+}
+.overlay-enter-from,
+.overlay-leave-to {
+  opacity: 0;
+}
+
+.modal-panel-enter-active,
+.modal-panel-leave-active {
+  transition:
+    transform 0.2s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.2s ease;
+}
+.modal-panel-enter-from,
+.modal-panel-leave-to {
+  transform: translateY(24px) scale(0.98);
+  opacity: 0;
+}
+
+.drawer-panel-enter-active,
+.drawer-panel-leave-active {
+  transition:
+    transform 0.24s cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 0.2s ease;
+}
+.drawer-panel-enter-from,
+.drawer-panel-leave-to {
+  transform: translateY(24px);
+  opacity: 0;
+}
+@media (min-width: 768px) {
+  .drawer-panel-enter-from,
+  .drawer-panel-leave-to {
+    transform: translateX(24px);
+  }
+}
+
+.dropdown-enter-active,
+.dropdown-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  transform-origin: top right;
+}
+.dropdown-enter-from,
+.dropdown-leave-to {
+  opacity: 0;
+  transform: scale(0.96) translateY(-4px);
+}
+
+.toast-enter-active,
+.toast-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.toast-leave-active {
+  position: absolute;
+}
+.toast-enter-from,
+.toast-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.toast-move {
+  transition: transform 0.2s ease;
 }

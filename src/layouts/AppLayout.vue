@@ -18,15 +18,15 @@ watch(() => auth.user?.id, initNotifications)
 </script>
 
 <template>
-  <div class="min-h-screen bg-surface-muted md:flex">
+  <div class="min-h-screen bg-surface-muted tablet:flex">
     <Sidebar />
 
-    <div class="fixed top-4 right-4 md:top-6 md:right-8 z-30">
+    <div class="fixed top-4 right-4 tablet:top-6 tablet:right-8 z-30">
       <NotificationBell />
     </div>
 
     <div class="flex-1 min-w-0">
-      <main class="pb-20 md:pb-8 max-w-5xl mx-auto">
+      <main class="pb-20 tablet:pb-8 max-w-5xl mx-auto">
         <slot />
       </main>
     </div>

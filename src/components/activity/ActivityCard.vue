@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { categoryIcon, icons } from '@/lib/icons'
 import type { Activity } from '@/types'
 
 const props = withDefaults(
@@ -52,50 +53,57 @@ function open() {
 <template>
   <div
     v-if="compact"
-    class="card w-[180px] shrink-0 p-3 cursor-pointer hover:shadow-lg transition"
+    class="card card-hover w-[180px] shrink-0 p-3 cursor-pointer"
     @click="open"
   >
     <div class="flex items-center justify-between mb-2">
-      <span class="text-2xl">{{ activity.category.icon }}</span>
+      <span class="w-9 h-9 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center">
+        <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-sm" />
+      </span>
       <span v-if="!isFree" class="text-[11px] font-semibold text-primary-700 bg-primary-50 px-2 py-0.5 rounded-full">
         {{ activity.amount.toLocaleString() }}
       </span>
     </div>
-    <p class="font-semibold text-sm text-gray-900 truncate">{{ activity.title }}</p>
-    <p class="text-xs text-gray-400 mt-0.5">{{ startLabel }}</p>
-    <p class="text-xs text-gray-400">{{ activity.people_needed }} kishi kerak</p>
+    <p class="font-semibold text-sm text-ink truncate">{{ activity.title }}</p>
+    <p class="text-xs text-ink-faint mt-0.5">{{ startLabel }}</p>
+    <p class="text-xs text-ink-faint">{{ activity.people_needed }} kishi kerak</p>
     <div class="flex items-center gap-1.5 mt-2">
       <div class="w-5 h-5 rounded-full bg-primary-100 text-primary-700 text-[10px] flex items-center justify-center font-semibold overflow-hidden">
         <img v-if="activity.owner.profile.avatar_url" :src="activity.owner.profile.avatar_url" class="w-full h-full object-cover" />
         <span v-else>{{ activity.owner.name[0] }}</span>
       </div>
-      <span class="text-xs text-gray-500 truncate">{{ activity.owner.name }}</span>
+      <span class="text-xs text-ink-muted truncate">{{ activity.owner.name }}</span>
     </div>
   </div>
 
-  <div v-else class="card p-4 cursor-pointer hover:shadow-lg transition" @click="open">
+  <div v-else class="card card-hover p-4 cursor-pointer" @click="open">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <p class="font-semibold text-gray-900 flex items-center gap-1.5">
-          <span>{{ activity.category.icon }}</span> {{ activity.title }}
+        <p class="font-semibold text-ink flex items-center gap-1.5">
+          <span class="w-6 h-6 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center shrink-0">
+            <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-[11px]" />
+          </span>
+          {{ activity.title }}
         </p>
-        <p class="text-sm text-gray-400 mt-1">{{ startLabel }}</p>
-        <p class="text-sm text-gray-400 flex items-center gap-1 mt-0.5">
-          📍 {{ activity.location_name }}
+        <p class="text-sm text-ink-faint mt-1">{{ startLabel }}</p>
+        <p class="text-sm text-ink-faint flex items-center gap-1 mt-0.5">
+          <FontAwesomeIcon :icon="icons.location" class="text-[11px]" />
+          {{ activity.location_name }}
           <span v-if="activity.distance_km !== undefined">· {{ activity.distance_km }} km</span>
         </p>
       </div>
-      <span class="shrink-0 text-[11px] font-semibold bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">
+      <span class="shrink-0 text-[11px] font-semibold bg-primary-50 text-primary-700 px-2.5 py-1 rounded-full flex items-center gap-1">
+        <FontAwesomeIcon :icon="icons.people" class="text-[10px]" />
         {{ activity.people_needed }} kishi
       </span>
     </div>
 
     <div
       class="mt-3 rounded-xl px-3 py-2 flex items-center justify-between"
-      :class="isFree ? 'bg-gray-50' : 'bg-primary-50'"
+      :class="isFree ? 'bg-surface-muted' : 'bg-primary-50'"
     >
       <div>
-        <p class="font-semibold" :class="isFree ? 'text-gray-700' : 'text-primary-700'">
+        <p class="font-semibold" :class="isFree ? 'text-ink-secondary' : 'text-primary-700'">
           {{ isFree ? 'Bepul' : `${activity.amount.toLocaleString()} UZS` }}
         </p>
         <p v-if="!isFree" class="text-xs text-primary-500">{{ paymentLabel }}</p>
@@ -108,11 +116,12 @@ function open() {
           <img v-if="activity.owner.profile.avatar_url" :src="activity.owner.profile.avatar_url" class="w-full h-full object-cover" />
           <span v-else>{{ activity.owner.name[0] }}</span>
         </div>
-        <span class="text-sm font-medium text-gray-700">{{ activity.owner.name }}</span>
-        <span v-if="activity.owner.identity_verified" class="text-primary-500 text-xs">✓</span>
+        <span class="text-sm font-medium text-ink-secondary">{{ activity.owner.name }}</span>
+        <FontAwesomeIcon v-if="activity.owner.identity_verified" :icon="icons.verified" class="text-primary-500 text-xs" />
       </div>
-      <span v-if="activity.owner.rating_average" class="text-sm text-amber-500 font-medium">
-        ⭐ {{ activity.owner.rating_average }}
+      <span v-if="activity.owner.rating_average" class="text-sm text-star font-medium flex items-center gap-1">
+        <FontAwesomeIcon :icon="icons.starSolid" class="text-[0.85em]" />
+        {{ activity.owner.rating_average }}
       </span>
     </div>
   </div>

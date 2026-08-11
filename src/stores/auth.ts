@@ -52,6 +52,11 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function deleteAccount(password: string) {
+    await authApi.deleteAccount(password)
+    clearSession()
+  }
+
   async function fetchMe() {
     const { data } = await authApi.me()
     user.value = data.data
@@ -79,6 +84,7 @@ export const useAuthStore = defineStore('auth', () => {
     register,
     login,
     logout,
+    deleteAccount,
     fetchMe,
     verifyPhone,
     resendOtp,

@@ -5,6 +5,7 @@ import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { useAuthStore } from '@/stores/auth'
 import { extractErrorMessage } from '@/composables/useApiError'
+import { icons } from '@/lib/icons'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -48,7 +49,7 @@ async function onSubmit() {
   loading.value = true
   try {
     await auth.verifyPhone(code)
-    router.push({ name: 'home' })
+    router.push({ name: 'onboarding-location' })
   } catch (e) {
     error.value = extractErrorMessage(e)
     digits.value = ['', '', '', '', '', '']
@@ -73,11 +74,11 @@ async function onResend() {
 <template>
   <AuthLayout :show-brand-panel="false">
     <div class="text-center mb-8">
-      <div class="w-16 h-16 rounded-2xl bg-primary-50 flex items-center justify-center text-3xl mx-auto mb-4">
-        📱
+      <div class="w-16 h-16 rounded-2xl bg-primary-50 flex items-center justify-center text-3xl text-primary-600 mx-auto mb-4">
+        <FontAwesomeIcon :icon="icons.phone" />
       </div>
-      <h2 class="text-2xl font-bold text-gray-900">Telefon tasdiqlash</h2>
-      <p class="text-gray-500 mt-1">
+      <h2 class="text-2xl font-bold text-ink">Telefon tasdiqlash</h2>
+      <p class="text-ink-muted mt-1">
         {{ auth.pendingPhone ?? auth.user?.phone }} raqamiga yuborilgan kodni kiriting
       </p>
     </div>
@@ -91,20 +92,20 @@ async function onResend() {
         type="text"
         inputmode="numeric"
         maxlength="1"
-        class="w-11 h-13 sm:w-12 sm:h-14 text-center text-xl font-semibold rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400"
+        class="w-11 h-13 sm:w-12 sm:h-14 text-center text-xl font-semibold rounded-xl border border-border outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400"
         @input="onDigitInput(index, $event)"
         @keydown="onKeydown(index, $event)"
       />
     </div>
 
-    <p v-if="error" class="text-sm text-red-500 text-center mb-4">{{ error }}</p>
+    <p v-if="error" class="text-sm text-danger text-center mb-4">{{ error }}</p>
 
     <AppButton :loading="loading" @click="onSubmit">Tasdiqlash</AppButton>
 
-    <p class="text-center text-sm text-gray-500 mt-6">
+    <p class="text-center text-sm text-ink-muted mt-6">
       <button
         type="button"
-        class="text-primary-600 font-medium disabled:text-gray-400"
+        class="text-primary-600 font-medium disabled:text-ink-faint"
         :disabled="cooldown > 0"
         @click="onResend"
       >

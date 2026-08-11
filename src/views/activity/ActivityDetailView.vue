@@ -4,13 +4,22 @@ import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import AppTextarea from '@/components/ui/AppTextarea.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
+import Avatar from '@/components/ui/Avatar.vue'
+import VerificationBadge from '@/components/ui/VerificationBadge.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import ReportBlockMenu from '@/components/profile/ReportBlockMenu.vue'
 import { activitiesApi } from '@/api/activities'
 import { applicationsApi } from '@/api/applications'
 import { matchesApi } from '@/api/matches'
+import { invoicesApi } from '@/api/invoices'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import { extractErrorMessage } from '@/composables/useApiError'
-import type { Activity, ActivityMatch, Application, Payment } from '@/types'
+import { categoryIcon, icons } from '@/lib/icons'
+import type { Activity, ActivityMatch, Application, ActivityStatus, Invoice } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,25 +28,21 @@ const notifications = useNotificationsStore()
 
 const activity = ref<Activity | null>(null)
 const match = ref<ActivityMatch | null>(null)
-const payment = ref<Payment | null>(null)
+const invoices = ref<Invoice[]>([])
 const loading = ref(true)
+const hasError = ref(false)
 const showApplyModal = ref(false)
 const message = ref('')
 const applying = ref(false)
 const myApplication = ref<Application | null>(null)
 const error = ref('')
 const cancelling = ref(false)
-const completing = ref(false)
-const paying = ref(false)
-const selectedRecipientId = ref<number | null>(null)
+const confirming = ref(false)
+const payingInvoiceId = ref<number | null>(null)
 
 const isOwner = computed(() => activity.value?.owner.id === auth.user?.id)
 
-const otherParticipants = computed(() => match.value?.participants.filter((p) => p.id !== auth.user?.id) ?? [])
-
-const isParticipant = computed(
-  () => !isOwner.value && match.value?.participants.some((p) => p.id === auth.user?.id),
-)
+const isParticipant = computed(() => !!activity.value?.my_participant_id)
 
 const paymentLabel = computed(() => {
   if (!activity.value) return ''
@@ -55,56 +60,73 @@ const paymentLabel = computed(() => {
   }
 })
 
-const canInitiatePayment = computed(() => {
-  if (!activity.value || activity.value.payment_type === 'free' || payment.value) return false
-  if (activity.value.payment_type === 'owner_pays') return isOwner.value && otherParticipants.value.length > 0
-  return isParticipant.value
-})
+const statusLabels: Record<ActivityStatus, string> = {
+  draft: 'Qoralama',
+  published: "E'lon qilingan",
+  full: "To'lgan",
+  in_progress: 'Davom etmoqda',
+  completed: 'Yakunlangan',
+  cancelled: 'Bekor qilingan',
+  expired: "Muddati o'tgan",
+}
 
-const canComplete = computed(() => activity.value?.payment_type === 'free' || !!payment.value)
+const statusVariants: Record<ActivityStatus, 'primary' | 'success' | 'danger' | 'neutral'> = {
+  draft: 'neutral',
+  published: 'primary',
+  full: 'success',
+  in_progress: 'success',
+  completed: 'neutral',
+  cancelled: 'danger',
+  expired: 'neutral',
+}
 
-const paymentStatusLabel = computed(() => {
-  if (!payment.value) return ''
-  const amIPayer = payment.value.payer.id === auth.user?.id
-  switch (payment.value.status) {
-    case 'held':
-      return amIPayer ? "To'lov ushlab turilgan — faoliyat tugagach yuboriladi" : "To'lov ushlab turilgan — faoliyat tugagach olasiz"
-    case 'released':
-      return amIPayer ? "To'lov yuborildi ✓" : "To'lov qabul qilindi ✓"
-    case 'refunded':
-      return "To'lov qaytarildi"
-    default:
-      return payment.value.status
-  }
-})
+const myOwedInvoice = computed(() => invoices.value.find((i) => !['paid', 'cancelled'].includes(i.status)))
+const myPaidInvoice = computed(() => invoices.value.find((i) => i.status === 'paid'))
+
+const iHaveConfirmedCompletion = computed(() =>
+  isOwner.value ? !!activity.value?.owner_confirmed_completed_at : !!activity.value?.my_participation_confirmed_at,
+)
+
+const canConfirmCompletion = computed(
+  () =>
+    !!activity.value &&
+    ['full', 'in_progress'].includes(activity.value.status) &&
+    (isOwner.value || isParticipant.value) &&
+    !iHaveConfirmedCompletion.value,
+)
 
 async function load() {
   loading.value = true
+  hasError.value = false
   const activityId = route.params.id as string
 
-  const [{ data }, myApplications] = await Promise.all([
-    activitiesApi.show(activityId),
-    applicationsApi.mine().catch(() => ({ data: { data: [] } })),
-  ])
-  activity.value = data.data
-  myApplication.value =
-    myApplications.data.data.find(
-      (a) => a.activity.id === data.data.id && a.status !== 'cancelled' && a.status !== 'rejected',
-    ) ?? null
-
-  if (activity.value.status !== 'published' && activity.value.status !== 'draft') {
-    const [matchesRes, paymentRes] = await Promise.all([
-      matchesApi.list(),
-      activity.value.payment_type !== 'free'
-        ? activitiesApi.myPayment(activity.value.id).catch(() => ({ data: { data: null } }))
-        : Promise.resolve({ data: { data: null } }),
+  try {
+    const [{ data }, myApplications] = await Promise.all([
+      activitiesApi.show(activityId),
+      applicationsApi.mine().catch(() => ({ data: { data: [] } })),
     ])
-    match.value = matchesRes.data.data.find((m) => m.activity.id === activity.value?.id) ?? null
-    payment.value = paymentRes.data.data
-    if (otherParticipants.value.length === 1) selectedRecipientId.value = otherParticipants.value[0].id
-  }
+    activity.value = data.data
+    myApplication.value =
+      myApplications.data.data.find(
+        (a) => a.activity.id === data.data.id && a.status !== 'cancelled' && a.status !== 'rejected',
+      ) ?? null
 
-  loading.value = false
+    if (activity.value.status !== 'published' && activity.value.status !== 'draft') {
+      const needsInvoice = !['free', 'shared_cost'].includes(activity.value.payment_type)
+      const [matchesRes, invoicesRes] = await Promise.all([
+        matchesApi.list(),
+        needsInvoice
+          ? invoicesApi.mine(activity.value.id).catch(() => ({ data: { data: [] } }))
+          : Promise.resolve({ data: { data: [] as Invoice[] } }),
+      ])
+      match.value = matchesRes.data.data.find((m) => m.activity.id === activity.value?.id) ?? null
+      invoices.value = invoicesRes.data.data
+    }
+  } catch {
+    hasError.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 async function submitApply() {
@@ -133,35 +155,41 @@ async function cancelActivity() {
   }
 }
 
-async function completeActivity() {
+async function confirmCompletion() {
   if (!activity.value) return
   error.value = ''
-  completing.value = true
+  confirming.value = true
   try {
-    const { data } = await activitiesApi.complete(activity.value.id)
-    activity.value = data.data
-    if (activity.value.payment_type !== 'free') {
-      const paymentRes = await activitiesApi.myPayment(activity.value.id).catch(() => ({ data: { data: null } }))
-      payment.value = paymentRes.data.data
+    if (isOwner.value) {
+      await activitiesApi.confirmCompletion(activity.value.id)
+    } else if (activity.value.my_participant_id) {
+      await activitiesApi.confirmParticipantCompletion(activity.value.my_participant_id)
+    }
+    await load()
+  } catch (e) {
+    error.value = extractErrorMessage(e)
+  } finally {
+    confirming.value = false
+  }
+}
+
+async function payInvoice(invoice: Invoice) {
+  error.value = ''
+  payingInvoiceId.value = invoice.id
+  try {
+    const { data } = await invoicesApi.pay(invoice.id)
+    if (data.data.checkout_url) {
+      window.location.href = data.data.checkout_url
+      return
+    }
+    if (activity.value) {
+      const { data: invoicesRes } = await invoicesApi.mine(activity.value.id)
+      invoices.value = invoicesRes.data
     }
   } catch (e) {
     error.value = extractErrorMessage(e)
   } finally {
-    completing.value = false
-  }
-}
-
-async function pay() {
-  if (!activity.value) return
-  error.value = ''
-  paying.value = true
-  try {
-    const { data } = await activitiesApi.pay(activity.value.id, selectedRecipientId.value ?? undefined)
-    payment.value = data.data
-  } catch (e) {
-    error.value = extractErrorMessage(e)
-  } finally {
-    paying.value = false
+    payingInvoiceId.value = null
   }
 }
 
@@ -182,41 +210,58 @@ onMounted(load)
 
 <template>
   <AppLayout>
-    <div v-if="loading" class="p-8 text-center text-ink-faint">Yuklanmoqda...</div>
+    <div v-if="loading" class="pb-8">
+      <Skeleton variant="block" height="14rem" class="w-full md:rounded-b-3xl" />
+      <div class="px-4 md:px-8 -mt-6 md:mt-6 relative">
+        <div class="card p-5 space-y-3">
+          <Skeleton variant="text" width="35%" />
+          <Skeleton variant="text" width="70%" />
+          <Skeleton variant="text" width="50%" />
+          <Skeleton variant="block" height="3.5rem" />
+        </div>
+      </div>
+    </div>
+
+    <ErrorState v-else-if="hasError" @retry="load" />
 
     <div v-else-if="activity" class="pb-8">
       <div v-if="activity.image_url" class="w-full h-56 md:h-72 md:rounded-b-3xl overflow-hidden">
         <img :src="activity.image_url" class="w-full h-full object-cover" />
       </div>
-      <div v-else class="w-full h-40 md:h-56 md:rounded-b-3xl bg-primary-50 flex items-center justify-center text-6xl">
-        {{ activity.category.icon }}
+      <div v-else class="w-full h-40 md:h-56 md:rounded-b-3xl bg-primary-50 flex items-center justify-center text-primary-300 text-5xl">
+        <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" />
       </div>
 
       <div class="px-4 md:px-8 -mt-6 md:mt-6 relative">
         <div class="card p-5">
           <div class="flex items-center justify-between mb-1">
-            <span class="text-xs font-semibold text-primary-600 bg-primary-50 px-2.5 py-1 rounded-full">
-              {{ activity.category.icon }} {{ activity.category.name }}
+            <span class="text-xs font-semibold text-primary-600 bg-primary-50 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+              <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-[10px]" />
+              {{ activity.category.name }}
             </span>
-            <span
+            <StatusBadge
               v-if="activity.status !== 'published'"
-              class="text-xs font-semibold px-2.5 py-1 rounded-full"
-              :class="{
-                'bg-success-bg text-success': activity.status === 'full',
-                'bg-danger-bg text-danger': activity.status === 'cancelled',
-                'bg-surface-muted text-ink-muted': activity.status === 'completed',
-              }"
-            >
-              {{ activity.status }}
-            </span>
+              :status="activity.status"
+              :labels="statusLabels"
+              :variants="statusVariants"
+            />
           </div>
 
           <h1 class="text-xl font-bold text-ink mt-2">{{ activity.title }}</h1>
 
           <div class="mt-3 space-y-1.5 text-sm text-ink-muted">
-            <p>🕘 {{ new Date(activity.start_at).toLocaleString('uz-UZ') }}</p>
-            <p>📍 {{ activity.location_name }}</p>
-            <p>👥 {{ activity.people_needed }} kishi kerak</p>
+            <p class="flex items-center gap-2">
+              <FontAwesomeIcon :icon="icons.time" class="text-ink-faint w-4" />
+              {{ new Date(activity.start_at).toLocaleString('uz-UZ') }}
+            </p>
+            <p class="flex items-center gap-2">
+              <FontAwesomeIcon :icon="icons.location" class="text-ink-faint w-4" />
+              {{ activity.location_name }}
+            </p>
+            <p class="flex items-center gap-2">
+              <FontAwesomeIcon :icon="icons.people" class="text-ink-faint w-4" />
+              {{ activity.people_needed }} kishi kerak
+            </p>
           </div>
 
           <div
@@ -236,54 +281,45 @@ onMounted(load)
             <p class="text-sm text-ink-muted leading-relaxed">{{ activity.description }}</p>
           </div>
 
-          <div class="mt-5 pt-5 border-t border-border">
-            <RouterLink :to="{ name: 'user-profile', params: { id: activity.owner.id } }" class="flex items-center gap-3">
-              <div class="w-11 h-11 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center font-semibold overflow-hidden">
-                <img v-if="activity.owner.profile.avatar_url" :src="activity.owner.profile.avatar_url" class="w-full h-full object-cover" />
-                <span v-else>{{ activity.owner.name[0] }}</span>
-              </div>
+          <div class="mt-5 pt-5 border-t border-border flex items-center justify-between gap-3">
+            <RouterLink :to="{ name: 'user-profile', params: { id: activity.owner.id } }" class="flex items-center gap-3 min-w-0">
+              <Avatar :src="activity.owner.profile.avatar_url" :name="activity.owner.name" size="lg" />
               <div class="min-w-0 flex-1">
-                <p class="font-semibold text-ink flex items-center gap-1">
+                <p class="font-semibold text-ink flex items-center gap-1.5">
                   {{ activity.owner.name }}
-                  <span v-if="activity.owner.identity_verified" class="text-primary-500 text-xs">✓ Tasdiqlangan</span>
+                  <VerificationBadge v-if="activity.owner.identity_verified" compact />
                 </p>
-                <p v-if="activity.owner.rating_average" class="text-sm text-star">
-                  ⭐ {{ activity.owner.rating_average }} ({{ activity.owner.reviews_count }} sharh)
+                <p v-if="activity.owner.rating_average" class="text-sm text-ink-muted flex items-center gap-1">
+                  <FontAwesomeIcon :icon="icons.starSolid" class="text-star" />
+                  {{ activity.owner.rating_average }} ({{ activity.owner.reviews_count }} sharh)
                 </p>
               </div>
             </RouterLink>
+            <ReportBlockMenu v-if="!isOwner" :user-id="activity.owner.id" :user-name="activity.owner.name" />
           </div>
         </div>
 
-        <!-- Payment section -->
-        <div v-if="match && activity.payment_type !== 'free'" class="card p-5 mt-4">
-          <h2 class="font-semibold text-ink mb-3">To'lov</h2>
-
-          <div v-if="payment" class="rounded-xl bg-surface-muted px-4 py-3 text-sm text-ink-secondary">
-            {{ paymentStatusLabel }}
-          </div>
-
-          <template v-else-if="canInitiatePayment">
-            <label v-if="isOwner && otherParticipants.length > 1" class="block mb-3">
-              <span class="block text-sm font-medium text-ink-secondary mb-1.5">Kimga to'lanadi</span>
-              <select
-                v-model.number="selectedRecipientId"
-                class="w-full h-12 px-4 rounded-xl border border-border bg-white text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
-              >
-                <option v-for="p in otherParticipants" :key="p.id" :value="p.id">{{ p.name }}</option>
-              </select>
-            </label>
-
-            <p v-if="error" class="text-sm text-danger mb-3">{{ error }}</p>
-
-            <AppButton :loading="paying" @click="pay">
-              {{ activity.amount.toLocaleString() }} UZS to'lash
-            </AppButton>
-          </template>
-
-          <p v-else class="text-sm text-ink-faint">
-            {{ isOwner ? "Sherik to'lovni amalga oshiradi." : "Faoliyat egasi to'lovni amalga oshiradi." }}
+        <!-- Commission invoice section -->
+        <div v-if="match && myOwedInvoice" class="card p-5 mt-4">
+          <h2 class="font-semibold text-ink mb-1">Platforma komissiyasi</h2>
+          <p class="text-sm text-ink-muted mb-3">
+            Faoliyat summasi ({{ activity.amount.toLocaleString() }} UZS) tomonlar o'rtasida hal qilinadi. Rivex faqat
+            o'z xizmat haqini oladi.
           </p>
+          <div class="rounded-xl bg-primary-50 px-4 py-3 mb-3">
+            <p class="font-bold text-lg text-primary-700">{{ myOwedInvoice.amount.toLocaleString() }} UZS</p>
+            <p class="text-sm text-primary-500">Komissiya ({{ myOwedInvoice.commission_rate }}%)</p>
+          </div>
+          <p v-if="error" class="text-sm text-danger mb-3">{{ error }}</p>
+          <AppButton :loading="payingInvoiceId === myOwedInvoice.id" @click="payInvoice(myOwedInvoice)">
+            To'lash
+          </AppButton>
+        </div>
+        <div v-else-if="match && myPaidInvoice" class="card p-5 mt-4">
+          <div class="rounded-xl bg-success-bg text-success px-4 py-3 text-sm font-medium flex items-center gap-2">
+            <FontAwesomeIcon :icon="icons.verified" />
+            Komissiya to'landi ({{ myPaidInvoice.amount.toLocaleString() }} UZS)
+          </div>
         </div>
 
         <div class="mt-4 space-y-3">
@@ -298,38 +334,26 @@ onMounted(load)
                 Arizalarni ko'rish
               </AppButton>
               <AppButton
-                v-if="['full', 'in_progress'].includes(activity.status)"
-                :loading="completing"
-                :disabled="cancelling || !canComplete"
-                @click="completeActivity"
-              >
-                Faoliyatni yakunlash
-              </AppButton>
-              <AppButton
                 v-if="!['cancelled', 'completed'].includes(activity.status)"
                 variant="ghost"
                 :loading="cancelling"
-                :disabled="completing"
+                :disabled="confirming"
                 @click="cancelActivity"
               >
                 Bekor qilish
               </AppButton>
             </div>
-            <p
-              v-if="['full', 'in_progress'].includes(activity.status) && !canComplete"
-              class="text-sm text-ink-faint"
-            >
-              To'lov amalga oshirilgandan keyin faoliyatni yakunlashingiz mumkin.
-            </p>
           </template>
           <template v-else-if="myApplication?.status === 'accepted'">
-            <div class="h-12 rounded-xl bg-success-bg text-success font-semibold flex items-center justify-center">
-              ✓ Arizangiz qabul qilindi!
+            <div class="h-12 rounded-xl bg-success-bg text-success font-semibold flex items-center justify-center gap-2">
+              <FontAwesomeIcon :icon="icons.verified" />
+              Arizangiz qabul qilindi!
             </div>
           </template>
           <template v-else-if="myApplication?.status === 'pending'">
-            <div class="h-12 rounded-xl bg-primary-50 text-primary-700 font-semibold flex items-center justify-center">
-              ⏳ Ariza yuborildi — javobni kuting
+            <div class="h-12 rounded-xl bg-primary-50 text-primary-700 font-semibold flex items-center justify-center gap-2">
+              <FontAwesomeIcon :icon="icons.pending" />
+              Ariza yuborildi — javobni kuting
             </div>
           </template>
           <template v-else-if="activity.status === 'published'">
@@ -344,21 +368,40 @@ onMounted(load)
           <AppButton
             v-if="isParticipant && match"
             variant="outline"
+            :icon="icons.chat"
             @click="router.push({ name: 'chat-detail', params: { matchId: match.id } })"
           >
-            💬 Chatga o'tish
+            Chatga o'tish
           </AppButton>
+
+          <template v-if="(isOwner || isParticipant) && ['full', 'in_progress'].includes(activity.status)">
+            <AppButton
+              v-if="canConfirmCompletion"
+              variant="outline"
+              :icon="icons.completedFlag"
+              :loading="confirming"
+              @click="confirmCompletion"
+            >
+              Faoliyat tugadimi? Tasdiqlash
+            </AppButton>
+            <div
+              v-else-if="iHaveConfirmedCompletion"
+              class="h-12 rounded-xl bg-surface-muted text-ink-muted text-sm font-medium flex items-center justify-center"
+            >
+              Siz tasdiqladingiz — boshqa tomon kutilmoqda
+            </div>
+          </template>
         </div>
       </div>
     </div>
 
     <AppModal v-if="showApplyModal" title="Ariza yuborish" @close="showApplyModal = false">
       <p class="text-sm text-ink-muted mb-3">Faoliyat egasiga xabar yozing (ixtiyoriy).</p>
-      <textarea
+      <AppTextarea
         v-model="message"
-        rows="3"
+        :rows="3"
         placeholder="Salom, men ham qatnashmoqchiman..."
-        class="w-full rounded-xl border border-border p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary-100 focus:border-primary-400 mb-3"
+        class="mb-3"
       />
       <p v-if="error" class="text-sm text-danger mb-3">{{ error }}</p>
       <AppButton :loading="applying" @click="submitApply">Arizani yuborish</AppButton>

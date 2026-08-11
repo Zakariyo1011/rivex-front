@@ -5,6 +5,7 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import { useAdminStore } from '@/stores/admin'
 import { extractErrorMessage } from '@/composables/useApiError'
+import { icons } from '@/lib/icons'
 
 const router = useRouter()
 const admin = useAdminStore()
@@ -32,7 +33,9 @@ async function onSubmit() {
   <div class="min-h-screen bg-surface-muted flex items-center justify-center px-6">
     <div class="w-full max-w-sm">
       <div class="flex items-center gap-2 mb-8 justify-center">
-        <div class="w-9 h-9 rounded-xl bg-primary-600 flex items-center justify-center text-white text-lg">🤝</div>
+        <div class="w-9 h-9 rounded-xl bg-primary-600 flex items-center justify-center text-white text-lg">
+          <FontAwesomeIcon :icon="icons.brand" />
+        </div>
         <div>
           <p class="font-bold text-ink leading-tight">Rivex</p>
           <p class="text-xs text-ink-faint leading-tight">Admin panel</p>

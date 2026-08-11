@@ -30,6 +30,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/auth/location',
+      name: 'onboarding-location',
+      component: () => import('@/views/auth/OnboardingLocationView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/',
       name: 'home',
       component: () => import('@/views/home/HomeView.vue'),
@@ -99,6 +105,18 @@ const router = createRouter({
       path: '/blocked-users',
       name: 'blocked-users',
       component: () => import('@/views/profile/BlockedUsersView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/safety-center',
+      name: 'safety-center',
+      component: () => import('@/views/safety/SafetyCenterView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/settings/SettingsView.vue'),
       meta: { requiresAuth: true },
     },
     {

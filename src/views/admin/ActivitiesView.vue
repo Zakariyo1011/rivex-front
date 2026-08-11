@@ -3,29 +3,49 @@ import { ref, onMounted } from 'vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppButton from '@/components/ui/AppButton.vue'
+import AppTextarea from '@/components/ui/AppTextarea.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { adminApi } from '@/api/admin'
+import { categoryIcon } from '@/lib/icons'
 import type { Activity } from '@/types'
 
 const activities = ref<Activity[]>([])
 const loading = ref(true)
+const hasError = ref(false)
 const statusFilter = ref('')
 const moderating = ref<Activity | null>(null)
 const reason = ref('')
 const submitting = ref(false)
 
-const statusClasses: Record<string, string> = {
-  published: 'bg-primary-50 text-primary-700',
-  full: 'bg-success-bg text-success',
-  completed: 'bg-surface-muted text-ink-muted',
-  cancelled: 'bg-danger-bg text-danger',
-  expired: 'bg-surface-muted text-ink-faint',
+const statusLabels: Record<string, string> = {
+  published: "E'lon qilingan",
+  full: "To'lgan",
+  completed: 'Yakunlangan',
+  cancelled: 'Bekor qilingan',
+  expired: "Muddati o'tgan",
+}
+
+const statusVariants: Record<string, 'primary' | 'success' | 'danger' | 'neutral'> = {
+  published: 'primary',
+  full: 'success',
+  completed: 'neutral',
+  cancelled: 'danger',
+  expired: 'neutral',
 }
 
 async function load() {
   loading.value = true
-  const { data } = await adminApi.activities({ status: statusFilter.value || undefined })
-  activities.value = data.data
-  loading.value = false
+  hasError.value = false
+  try {
+    const { data } = await adminApi.activities({ status: statusFilter.value || undefined })
+    activities.value = data.data
+  } catch {
+    hasError.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 async function submitModerate() {
@@ -51,7 +71,7 @@ onMounted(load)
 
     <select
       v-model="statusFilter"
-      class="h-10 px-3 rounded-xl border border-border bg-white text-sm outline-none mb-5"
+      class="h-10 px-3 rounded-xl border border-border bg-surface text-sm outline-none mb-5"
       @change="load"
     >
       <option value="">Barcha holatlar</option>
@@ -62,7 +82,8 @@ onMounted(load)
     </select>
 
     <div class="card overflow-hidden">
-      <table class="w-full text-sm">
+      <div class="overflow-x-auto">
+      <table class="w-full text-sm min-w-[640px]">
         <thead>
           <tr class="border-b border-border text-left text-ink-faint">
             <th class="px-5 py-3 font-medium">Faoliyat</th>
@@ -74,23 +95,25 @@ onMounted(load)
         </thead>
         <tbody>
           <tr v-if="loading">
-            <td colspan="5" class="px-5 py-8 text-center text-ink-faint">Yuklanmoqda...</td>
+            <td colspan="5" class="px-5 py-3" v-for="i in 5" :key="i"><Skeleton variant="text" width="80%" /></td>
+          </tr>
+          <tr v-else-if="hasError">
+            <td colspan="5" class="px-5 py-8"><ErrorState @retry="load" /></td>
           </tr>
           <tr v-else-if="activities.length === 0">
             <td colspan="5" class="px-5 py-8 text-center text-ink-faint">Faoliyat topilmadi.</td>
           </tr>
           <tr v-for="activity in activities" :key="activity.id" class="border-b border-border last:border-0">
             <td class="px-5 py-3">
-              <RouterLink :to="{ name: 'activity-detail', params: { id: activity.id } }" class="font-medium text-ink hover:text-primary-600">
-                {{ activity.category.icon }} {{ activity.title }}
+              <RouterLink :to="{ name: 'activity-detail', params: { id: activity.id } }" class="font-medium text-ink hover:text-primary-600 flex items-center gap-2">
+                <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-primary-500 text-xs" />
+                {{ activity.title }}
               </RouterLink>
             </td>
             <td class="px-5 py-3 text-ink-muted">{{ activity.owner.name }}</td>
             <td class="px-5 py-3 text-ink-muted">{{ new Date(activity.start_at).toLocaleDateString('uz-UZ') }}</td>
             <td class="px-5 py-3">
-              <span class="text-xs font-semibold px-2.5 py-1 rounded-full" :class="statusClasses[activity.status]">
-                {{ activity.status }}
-              </span>
+              <StatusBadge :status="activity.status" :labels="statusLabels" :variants="statusVariants" />
             </td>
             <td class="px-5 py-3 text-right">
               <button
@@ -104,16 +127,12 @@ onMounted(load)
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
 
     <AppModal v-if="moderating" title="Faoliyatni bekor qilish" @close="moderating = null">
       <p class="text-sm text-ink-muted mb-3">"{{ moderating.title }}" faoliyatini bekor qilish sababi</p>
-      <textarea
-        v-model="reason"
-        rows="3"
-        placeholder="Sabab (ixtiyoriy)"
-        class="w-full rounded-xl border border-border p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary-100 mb-3"
-      />
+      <AppTextarea v-model="reason" :rows="3" placeholder="Sabab (ixtiyoriy)" class="mb-3" />
       <AppButton :loading="submitting" @click="submitModerate">Bekor qilish</AppButton>
     </AppModal>
   </AdminLayout>

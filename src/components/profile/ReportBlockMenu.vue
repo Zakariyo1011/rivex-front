@@ -75,7 +75,7 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
       ⋮
     </button>
 
-    <div v-if="menuOpen" class="absolute right-0 mt-2 w-52 bg-white rounded-xl shadow-lg border border-border z-50 overflow-hidden">
+    <div v-if="menuOpen" class="absolute right-0 mt-2 w-52 bg-surface rounded-xl shadow-lg border border-border z-50 overflow-hidden">
       <button
         class="w-full text-left px-4 py-3 text-sm text-ink hover:bg-surface-muted"
         :disabled="reported"

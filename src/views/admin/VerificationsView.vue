@@ -3,29 +3,50 @@ import { ref, onMounted } from 'vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppButton from '@/components/ui/AppButton.vue'
+import AppTextarea from '@/components/ui/AppTextarea.vue'
+import Avatar from '@/components/ui/Avatar.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
+import Skeleton from '@/components/ui/Skeleton.vue'
 import { adminApi } from '@/api/admin'
+import { icons } from '@/lib/icons'
 import type { IdentityVerification } from '@/types'
 
 const verifications = ref<IdentityVerification[]>([])
 const loading = ref(true)
+const hasError = ref(false)
 const statusFilter = ref('pending')
 const actingId = ref<number | null>(null)
 const rejecting = ref<IdentityVerification | null>(null)
 const rejectReason = ref('')
 const submitting = ref(false)
 
-const statusClasses: Record<string, string> = {
-  not_verified: 'bg-surface-muted text-ink-muted',
-  pending: 'bg-primary-50 text-primary-700',
-  verified: 'bg-success-bg text-success',
-  rejected: 'bg-danger-bg text-danger',
+const statusLabels: Record<string, string> = {
+  not_verified: 'Tasdiqlanmagan',
+  pending: 'Kutilmoqda',
+  verified: 'Tasdiqlangan',
+  rejected: 'Rad etilgan',
+}
+
+const statusVariants: Record<string, 'neutral' | 'primary' | 'success' | 'danger'> = {
+  not_verified: 'neutral',
+  pending: 'primary',
+  verified: 'success',
+  rejected: 'danger',
 }
 
 async function load() {
   loading.value = true
-  const { data } = await adminApi.verifications({ status: statusFilter.value || undefined })
-  verifications.value = data.data
-  loading.value = false
+  hasError.value = false
+  try {
+    const { data } = await adminApi.verifications({ status: statusFilter.value || undefined })
+    verifications.value = data.data
+  } catch {
+    hasError.value = true
+  } finally {
+    loading.value = false
+  }
 }
 
 async function approve(verification: IdentityVerification) {
@@ -62,7 +83,7 @@ onMounted(load)
 
     <select
       v-model="statusFilter"
-      class="h-10 px-3 rounded-xl border border-border bg-white text-sm outline-none mb-5"
+      class="h-10 px-3 rounded-xl border border-border bg-surface text-sm outline-none mb-5"
       @change="load"
     >
       <option value="">Barchasi</option>
@@ -71,22 +92,25 @@ onMounted(load)
       <option value="rejected">Rad etilgan</option>
     </select>
 
-    <div v-if="loading" class="text-ink-faint text-sm">Yuklanmoqda...</div>
-    <div v-else-if="verifications.length === 0" class="text-ink-faint text-sm">Arizalar yo'q.</div>
+    <div v-if="loading" class="space-y-3">
+      <div v-for="i in 3" :key="i" class="card p-5 flex items-center gap-3">
+        <Skeleton variant="circle" width="2rem" height="2rem" />
+        <Skeleton variant="text" width="40%" />
+      </div>
+    </div>
+
+    <ErrorState v-else-if="hasError" @retry="load" />
+
+    <EmptyState v-else-if="verifications.length === 0" :icon="icons.identity" title="Arizalar yo'q" />
 
     <div v-else class="space-y-3">
       <div v-for="verification in verifications" :key="verification.id" class="card p-5">
         <div class="flex items-center justify-between mb-2">
           <RouterLink :to="{ name: 'user-profile', params: { id: verification.user.id } }" class="font-semibold text-ink hover:text-primary-600 flex items-center gap-2.5">
-            <div class="w-8 h-8 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-xs font-semibold overflow-hidden">
-              <img v-if="verification.user.profile.avatar_url" :src="verification.user.profile.avatar_url" class="w-full h-full object-cover" />
-              <span v-else>{{ verification.user.name[0] }}</span>
-            </div>
+            <Avatar :src="verification.user.profile.avatar_url" :name="verification.user.name" size="sm" />
             {{ verification.user.name }}
           </RouterLink>
-          <span class="text-xs font-semibold px-2.5 py-1 rounded-full" :class="statusClasses[verification.status]">
-            {{ verification.status }}
-          </span>
+          <StatusBadge :status="verification.status" :labels="statusLabels" :variants="statusVariants" />
         </div>
         <p class="text-xs text-ink-faint mb-3">Yuborilgan: {{ new Date(verification.submitted_at).toLocaleString('uz-UZ') }}</p>
         <p v-if="verification.rejection_reason" class="text-sm text-danger bg-danger-bg rounded-lg p-3 mb-3">
@@ -104,12 +128,7 @@ onMounted(load)
 
     <AppModal v-if="rejecting" title="Tasdiqlashni rad etish" @close="rejecting = null">
       <p class="text-sm text-ink-muted mb-3">{{ rejecting.user.name }} uchun rad etish sababi</p>
-      <textarea
-        v-model="rejectReason"
-        rows="3"
-        placeholder="Sabab (majburiy)"
-        class="w-full rounded-xl border border-border p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary-100 mb-3"
-      />
+      <AppTextarea v-model="rejectReason" :rows="3" placeholder="Sabab (majburiy)" class="mb-3" />
       <AppButton :disabled="!rejectReason.trim()" :loading="submitting" @click="submitReject">Rad etish</AppButton>
     </AppModal>
   </AdminLayout>

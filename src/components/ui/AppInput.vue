@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineProps<{
-  modelValue: string
+  modelValue: string | number
   label?: string
   type?: string
   placeholder?: string
@@ -15,20 +15,20 @@ defineEmits<{
 
 <template>
   <label class="block">
-    <span v-if="label" class="block text-sm font-medium text-gray-700 mb-1.5">{{ label }}</span>
+    <span v-if="label" class="block text-sm font-medium text-ink-secondary mb-1.5">{{ label }}</span>
     <input
       :type="type ?? 'text'"
       :value="modelValue"
       :placeholder="placeholder"
       :autocomplete="autocomplete"
-      class="w-full h-12 px-4 rounded-xl border bg-white text-[15px] outline-none transition focus:ring-2"
+      class="w-full h-12 px-4 rounded-xl border bg-surface text-[15px] outline-none transition focus:ring-2"
       :class="
         error
-          ? 'border-red-300 focus:ring-red-100 focus:border-red-400'
-          : 'border-gray-200 focus:ring-primary-100 focus:border-primary-400'
+          ? 'border-danger/40 focus:ring-danger/10 focus:border-danger'
+          : 'border-border focus:ring-primary-100 focus:border-primary-400'
       "
       @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
     />
-    <span v-if="error" class="block text-xs text-red-500 mt-1">{{ error }}</span>
+    <span v-if="error" class="block text-xs text-danger mt-1">{{ error }}</span>
   </label>
 </template>

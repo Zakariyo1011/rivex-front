@@ -38,8 +38,8 @@ async function onSubmit() {
 
 <template>
   <AuthLayout>
-    <h2 class="text-2xl font-bold text-gray-900 mb-1">Ro'yxatdan o'tish</h2>
-    <p class="text-gray-500 mb-6">Hisobingizni yarating</p>
+    <h2 class="text-2xl font-bold text-ink mb-1">Ro'yxatdan o'tish</h2>
+    <p class="text-ink-muted mb-6">Hisobingizni yarating</p>
 
     <form class="space-y-4" @submit.prevent="onSubmit">
       <AppInput v-model="name" label="Ism" placeholder="Azizbek Abdullayev" autocomplete="name" />
@@ -52,12 +52,12 @@ async function onSubmit() {
         autocomplete="new-password"
       />
 
-      <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
+      <p v-if="error" class="text-sm text-danger">{{ error }}</p>
 
       <AppButton type="submit" :loading="loading">Ro'yxatdan o'tish</AppButton>
     </form>
 
-    <p class="text-center text-sm text-gray-500 mt-6">
+    <p class="text-center text-sm text-ink-muted mt-6">
       Hisobingiz bormi?
       <RouterLink :to="{ name: 'login' }" class="text-primary-600 font-medium">Kirish</RouterLink>
     </p>
