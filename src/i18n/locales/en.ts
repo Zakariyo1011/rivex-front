@@ -17,6 +17,8 @@ export default {
     somethingWrong: 'Something went wrong',
   },
   notifications: {
+    seeAll: 'See all',
+    settings: 'Notification settings',
     title: 'Notifications',
     empty: 'No notifications yet',
     markAllRead: 'Mark all as read',

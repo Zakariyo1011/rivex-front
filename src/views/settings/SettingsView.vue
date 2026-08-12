@@ -8,6 +8,8 @@ import AppTabs from '@/components/ui/AppTabs.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
+import ChangePasswordModal from '@/components/settings/ChangePasswordModal.vue'
+import ChangePhoneModal from '@/components/settings/ChangePhoneModal.vue'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
 import { setStoredLocale, type Locale } from '@/i18n'
@@ -43,12 +45,30 @@ function setLanguage(value: string) {
 }
 
 const links = computed(() => [
+  { to: '/settings/notifications', icon: icons.notifications, label: t('notifications.settings') },
+  { to: '/no-show-reports', icon: icons.warning, label: 'Menga qarshi shikoyatlar' },
   { to: '/blocked-users', icon: icons.block, label: t('settings.blockedUsers') },
   { to: '/safety-center', icon: icons.trust, label: t('settings.safetyCenter') },
 ])
 
 const showDeleteModal = ref(false)
+const showPasswordModal = ref(false)
+const showPhoneModal = ref(false)
 const deletePassword = ref('')
+
+const verificationLabel = computed(() => {
+  switch (auth.user?.verification_status) {
+    case 'verified':
+      return 'Tasdiqlangan'
+    case 'pending':
+    case 'needs_review':
+      return "Ko'rib chiqilmoqda"
+    case 'rejected':
+      return 'Rad etilgan'
+    default:
+      return 'Tasdiqlanmagan'
+  }
+})
 const deleting = ref(false)
 const deleteError = ref('')
 
@@ -102,6 +122,58 @@ async function confirmDeleteAccount() {
       </AppCard>
 
       <AppCard class="mb-4" padding="none">
+        <h2 class="font-semibold text-ink p-4 pb-2">Xavfsizlik</h2>
+
+        <button
+          class="w-full flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition text-left"
+          @click="showPasswordModal = true"
+        >
+          <span class="flex items-center gap-3 text-sm font-medium text-ink">
+            <FontAwesomeIcon :icon="icons.lock" class="text-ink-faint w-4" />
+            Parolni o'zgartirish
+          </span>
+          <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+        </button>
+
+        <button
+          class="w-full flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition text-left"
+          @click="showPhoneModal = true"
+        >
+          <span class="flex items-center gap-3 text-sm font-medium text-ink min-w-0">
+            <FontAwesomeIcon :icon="icons.phone" class="text-ink-faint w-4 shrink-0" />
+            <span class="truncate">Telefon raqam</span>
+          </span>
+          <span class="flex items-center gap-2 shrink-0">
+            <span class="text-sm text-ink-muted">{{ auth.user?.phone }}</span>
+            <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+          </span>
+        </button>
+
+        <RouterLink
+          to="/verification"
+          class="flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition"
+        >
+          <span class="flex items-center gap-3 text-sm font-medium text-ink">
+            <FontAwesomeIcon :icon="icons.identity" class="text-ink-faint w-4" />
+            Shaxsni tasdiqlash
+          </span>
+          <span class="flex items-center gap-2">
+            <span
+              class="text-xs font-medium px-2 py-0.5 rounded-full"
+              :class="
+                auth.user?.verification_status === 'verified'
+                  ? 'bg-success-bg text-success'
+                  : 'bg-surface-muted text-ink-muted'
+              "
+            >
+              {{ verificationLabel }}
+            </span>
+            <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+          </span>
+        </RouterLink>
+      </AppCard>
+
+      <AppCard class="mb-4" padding="none">
         <h2 class="font-semibold text-ink p-4 pb-2">{{ t('settings.privacy') }}</h2>
         <RouterLink
           v-for="link in links"
@@ -130,6 +202,9 @@ async function confirmDeleteAccount() {
         </button>
       </AppCard>
     </div>
+
+    <ChangePasswordModal v-if="showPasswordModal" @close="showPasswordModal = false" />
+    <ChangePhoneModal v-if="showPhoneModal" @close="showPhoneModal = false" />
 
     <AppModal v-if="showDeleteModal" :title="t('settings.deleteAccount')" @close="showDeleteModal = false">
       <p class="text-sm text-ink-secondary mb-4">

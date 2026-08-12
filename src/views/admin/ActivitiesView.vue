@@ -10,6 +10,8 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import { adminApi } from '@/api/admin'
 import { categoryIcon } from '@/lib/icons'
 import type { Activity } from '@/types'
+import { formatDate } from '@/lib/datetime'
+import { activityStatus } from '@/lib/statusLabels'
 
 const activities = ref<Activity[]>([])
 const loading = ref(true)
@@ -18,22 +20,6 @@ const statusFilter = ref('')
 const moderating = ref<Activity | null>(null)
 const reason = ref('')
 const submitting = ref(false)
-
-const statusLabels: Record<string, string> = {
-  published: "E'lon qilingan",
-  full: "To'lgan",
-  completed: 'Yakunlangan',
-  cancelled: 'Bekor qilingan',
-  expired: "Muddati o'tgan",
-}
-
-const statusVariants: Record<string, 'primary' | 'success' | 'danger' | 'neutral'> = {
-  published: 'primary',
-  full: 'success',
-  completed: 'neutral',
-  cancelled: 'danger',
-  expired: 'neutral',
-}
 
 async function load() {
   loading.value = true
@@ -83,55 +69,73 @@ onMounted(load)
 
     <div class="card overflow-hidden">
       <div class="overflow-x-auto">
-      <table class="w-full text-sm min-w-[640px]">
-        <thead>
-          <tr class="border-b border-border text-left text-ink-faint">
-            <th class="px-5 py-3 font-medium">Faoliyat</th>
-            <th class="px-5 py-3 font-medium">Egasi</th>
-            <th class="px-5 py-3 font-medium">Sana</th>
-            <th class="px-5 py-3 font-medium">Holat</th>
-            <th class="px-5 py-3 font-medium"></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading">
-            <td colspan="5" class="px-5 py-3" v-for="i in 5" :key="i"><Skeleton variant="text" width="80%" /></td>
-          </tr>
-          <tr v-else-if="hasError">
-            <td colspan="5" class="px-5 py-8"><ErrorState @retry="load" /></td>
-          </tr>
-          <tr v-else-if="activities.length === 0">
-            <td colspan="5" class="px-5 py-8 text-center text-ink-faint">Faoliyat topilmadi.</td>
-          </tr>
-          <tr v-for="activity in activities" :key="activity.id" class="border-b border-border last:border-0">
-            <td class="px-5 py-3">
-              <RouterLink :to="{ name: 'activity-detail', params: { id: activity.id } }" class="font-medium text-ink hover:text-primary-600 flex items-center gap-2">
-                <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-primary-500 text-xs" />
-                {{ activity.title }}
-              </RouterLink>
-            </td>
-            <td class="px-5 py-3 text-ink-muted">{{ activity.owner.name }}</td>
-            <td class="px-5 py-3 text-ink-muted">{{ new Date(activity.start_at).toLocaleDateString('uz-UZ') }}</td>
-            <td class="px-5 py-3">
-              <StatusBadge :status="activity.status" :labels="statusLabels" :variants="statusVariants" />
-            </td>
-            <td class="px-5 py-3 text-right">
-              <button
-                v-if="!['cancelled', 'completed'].includes(activity.status)"
-                class="text-xs font-medium text-danger"
-                @click="moderating = activity"
-              >
-                Bekor qilish
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+        <table class="w-full text-sm min-w-[640px]">
+          <thead>
+            <tr class="border-b border-border text-left text-ink-faint">
+              <th class="px-5 py-3 font-medium">Faoliyat</th>
+              <th class="px-5 py-3 font-medium">Egasi</th>
+              <th class="px-5 py-3 font-medium">Sana</th>
+              <th class="px-5 py-3 font-medium">Holat</th>
+              <th class="px-5 py-3 font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="loading">
+              <td colspan="5" class="px-5 py-3" v-for="i in 5" :key="i">
+                <Skeleton variant="text" width="80%" />
+              </td>
+            </tr>
+            <tr v-else-if="hasError">
+              <td colspan="5" class="px-5 py-8"><ErrorState @retry="load" /></td>
+            </tr>
+            <tr v-else-if="activities.length === 0">
+              <td colspan="5" class="px-5 py-8 text-center text-ink-faint">Faoliyat topilmadi.</td>
+            </tr>
+            <tr
+              v-for="activity in activities"
+              :key="activity.id"
+              class="border-b border-border last:border-0"
+            >
+              <td class="px-5 py-3">
+                <RouterLink
+                  :to="{ name: 'activity-detail', params: { id: activity.id } }"
+                  class="font-medium text-ink hover:text-primary-600 flex items-center gap-2"
+                >
+                  <FontAwesomeIcon
+                    :icon="categoryIcon(activity.category.slug)"
+                    class="text-primary-500 text-xs"
+                  />
+                  {{ activity.title }}
+                </RouterLink>
+              </td>
+              <td class="px-5 py-3 text-ink-muted">{{ activity.owner.name }}</td>
+              <td class="px-5 py-3 text-ink-muted">{{ formatDate(activity.start_at) }}</td>
+              <td class="px-5 py-3">
+                <StatusBadge
+                  :status="activity.status"
+                  :labels="activityStatus.labels"
+                  :variants="activityStatus.variants"
+                />
+              </td>
+              <td class="px-5 py-3 text-right">
+                <button
+                  v-if="!['cancelled', 'completed'].includes(activity.status)"
+                  class="text-xs font-medium text-danger"
+                  @click="moderating = activity"
+                >
+                  Bekor qilish
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
     <AppModal v-if="moderating" title="Faoliyatni bekor qilish" @close="moderating = null">
-      <p class="text-sm text-ink-muted mb-3">"{{ moderating.title }}" faoliyatini bekor qilish sababi</p>
+      <p class="text-sm text-ink-muted mb-3">
+        "{{ moderating.title }}" faoliyatini bekor qilish sababi
+      </p>
       <AppTextarea v-model="reason" :rows="3" placeholder="Sabab (ixtiyoriy)" class="mb-3" />
       <AppButton :loading="submitting" @click="submitModerate">Bekor qilish</AppButton>
     </AppModal>

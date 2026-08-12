@@ -8,9 +8,17 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { walletApi } from '@/api/wallet'
+import { useAuthStore } from '@/stores/auth'
+import { useEchoChannel } from '@/composables/useEchoChannel'
+import { onEchoReconnect } from '@/composables/useEcho'
+import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/composables/useApiError'
 import { icons } from '@/lib/icons'
 import type { Wallet, WalletTransaction } from '@/types'
+import { formatDate, formatNumber } from '@/lib/datetime'
+
+const auth = useAuthStore()
+const toast = useToast()
 
 const wallet = ref<Wallet | null>(null)
 const transactions = ref<WalletTransaction[]>([])
@@ -25,7 +33,7 @@ const canWithdraw = computed(
   () => !!wallet.value && wallet.value.available_balance >= wallet.value.min_withdrawal,
 )
 
-const format = (value: number) => value.toLocaleString('uz-UZ')
+const format = formatNumber
 
 /** Ledger rows are the only record of where money moved, so label them plainly. */
 function transactionLabel(tx: WalletTransaction): string {
@@ -71,6 +79,45 @@ async function withdraw() {
     withdrawing.value = false
   }
 }
+
+/**
+ * Live balance.
+ *
+ * Wallet movements ride the user's own private channel rather than a
+ * `wallet.{id}` one: the audience is identical, and a second channel would be
+ * a second authorisation callback to get wrong.
+ *
+ * The event carries the authoritative balance, so the figures are applied
+ * directly instead of re-fetching. The transaction row is prepended when it is
+ * new — a refund produces one event, and the ledger should show it at once.
+ */
+useEchoChannel(() => (auth.user ? `App.Models.User.${auth.user.id}` : null), {
+  listeners: {
+    '.WalletUpdated': (payload: {
+      balance: number
+      pending_balance: number
+      transaction: WalletTransaction | null
+    }) => {
+      if (wallet.value) {
+        wallet.value.balance = payload.balance
+        wallet.value.pending_balance = payload.pending_balance
+        wallet.value.available_balance = payload.balance
+        wallet.value.total_balance = payload.balance + payload.pending_balance
+      }
+
+      if (payload.transaction && !transactions.value.some((t) => t.id === payload.transaction!.id)) {
+        transactions.value.unshift(payload.transaction)
+      }
+    },
+
+    '.PaymentRefunded': (payload: { amount: number }) => {
+      toast.success(`${format(payload.amount)} UZS hamyoningizga qaytarildi.`)
+    },
+  },
+})
+
+// Balance changes during a dropped connection are simply missed.
+onEchoReconnect(() => void load())
 
 onMounted(load)
 </script>
@@ -132,7 +179,7 @@ onMounted(load)
             <div class="min-w-0">
               <p class="text-sm font-medium text-ink truncate">{{ transactionLabel(tx) }}</p>
               <p class="text-xs text-ink-faint">
-                {{ new Date(tx.created_at).toLocaleDateString('uz-UZ') }} · Balans:
+                {{ formatDate(tx.created_at) }} · Balans:
                 {{ format(tx.balance_after) }}
               </p>
             </div>

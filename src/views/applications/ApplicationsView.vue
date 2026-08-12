@@ -9,7 +9,9 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import { applicationsApi } from '@/api/applications'
 import { activitiesApi } from '@/api/activities'
 import { categoryIcon, icons } from '@/lib/icons'
-import type { Application, ApplicationStatus, Activity, ActivityStatus } from '@/types'
+import type { Application, Activity, ActivityStatus } from '@/types'
+import { formatActivityStart } from '@/lib/datetime'
+import { applicationStatus } from '@/lib/statusLabels'
 
 const tab = ref<'applications' | 'activities'>('applications')
 
@@ -25,22 +27,6 @@ const tabs = [
   { value: 'activities', label: 'Mening faoliyatlarim' },
 ]
 
-const statusLabels: Record<ApplicationStatus, string> = {
-  pending: 'Kutilmoqda',
-  accepted: 'Qabul qilindi',
-  rejected: 'Rad etildi',
-  cancelled: 'Bekor qilindi',
-  expired: "Muddati o'tgan",
-}
-
-const statusVariants: Record<ApplicationStatus, 'primary' | 'success' | 'danger' | 'neutral'> = {
-  pending: 'primary',
-  accepted: 'success',
-  rejected: 'danger',
-  cancelled: 'neutral',
-  expired: 'neutral',
-}
-
 const activityStatusLabels: Record<ActivityStatus, string> = {
   draft: 'Qoralama',
   published: "E'lon qilingan",
@@ -51,15 +37,16 @@ const activityStatusLabels: Record<ActivityStatus, string> = {
   expired: "Muddati o'tgan",
 }
 
-const activityStatusVariants: Record<ActivityStatus, 'primary' | 'success' | 'danger' | 'neutral'> = {
-  draft: 'neutral',
-  published: 'primary',
-  full: 'success',
-  in_progress: 'success',
-  completed: 'neutral',
-  cancelled: 'danger',
-  expired: 'neutral',
-}
+const activityStatusVariants: Record<ActivityStatus, 'primary' | 'success' | 'danger' | 'neutral'> =
+  {
+    draft: 'neutral',
+    published: 'primary',
+    full: 'success',
+    in_progress: 'success',
+    completed: 'neutral',
+    cancelled: 'danger',
+    expired: 'neutral',
+  }
 
 async function cancel(application: Application) {
   await applicationsApi.cancel(application.id)
@@ -116,18 +103,27 @@ onMounted(loadApplications)
         />
 
         <div v-else class="space-y-3">
-          <div v-for="application in applications" :key="application.id" class="card card-hover p-4">
+          <div
+            v-for="application in applications"
+            :key="application.id"
+            class="card card-hover p-4"
+          >
             <RouterLink
               :to="{ name: 'activity-detail', params: { id: application.activity.id } }"
               class="flex items-start gap-3"
             >
-              <span class="w-9 h-9 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center shrink-0">
-                <FontAwesomeIcon :icon="categoryIcon(application.activity.category.slug)" class="text-sm" />
+              <span
+                class="w-9 h-9 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center shrink-0"
+              >
+                <FontAwesomeIcon
+                  :icon="categoryIcon(application.activity.category.slug)"
+                  class="text-sm"
+                />
               </span>
               <div class="min-w-0 flex-1">
                 <p class="font-semibold text-ink">{{ application.activity.title }}</p>
                 <p class="text-sm text-ink-muted">
-                  {{ new Date(application.activity.start_at).toLocaleString('uz-UZ') }}
+                  {{ formatActivityStart(application.activity.start_at) }}
                 </p>
                 <p v-if="application.message" class="text-sm text-ink-muted mt-1 line-clamp-2">
                   "{{ application.message }}"
@@ -135,8 +131,8 @@ onMounted(loadApplications)
               </div>
               <StatusBadge
                 :status="application.status"
-                :labels="statusLabels"
-                :variants="statusVariants"
+                :labels="applicationStatus.labels"
+                :variants="applicationStatus.variants"
                 class="shrink-0"
               />
             </RouterLink>
@@ -173,12 +169,14 @@ onMounted(loadApplications)
             :to="{ name: 'activity-detail', params: { id: activity.id } }"
             class="card card-hover p-4 flex items-start gap-3"
           >
-            <span class="w-9 h-9 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center shrink-0">
+            <span
+              class="w-9 h-9 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center shrink-0"
+            >
               <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-sm" />
             </span>
             <div class="min-w-0 flex-1">
               <p class="font-semibold text-ink">{{ activity.title }}</p>
-              <p class="text-sm text-ink-muted">{{ new Date(activity.start_at).toLocaleString('uz-UZ') }}</p>
+              <p class="text-sm text-ink-muted">{{ formatActivityStart(activity.start_at) }}</p>
             </div>
             <StatusBadge
               :status="activity.status"

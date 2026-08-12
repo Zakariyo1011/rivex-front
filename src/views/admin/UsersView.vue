@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import AdminLayout from '@/layouts/AdminLayout.vue'
 import Avatar from '@/components/ui/Avatar.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'

@@ -17,6 +17,8 @@ export default {
     somethingWrong: 'Что-то пошло не так',
   },
   notifications: {
+    seeAll: 'Показать все',
+    settings: 'Настройки уведомлений',
     title: 'Уведомления',
     empty: 'Пока нет уведомлений',
     markAllRead: 'Отметить всё как прочитанное',

@@ -3,12 +3,15 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
+import AppSelect from '@/components/ui/AppSelect.vue'
 import { locationsApi } from '@/api/locations'
+import { useAuthStore } from '@/stores/auth'
 import { extractErrorMessage } from '@/composables/useApiError'
 import { icons } from '@/lib/icons'
 import type { District, Region } from '@/types'
 
 const router = useRouter()
+const auth = useAuthStore()
 
 const regions = ref<Region[]>([])
 const districts = ref<District[]>([])
@@ -20,6 +23,9 @@ const saving = ref(false)
 const error = ref('')
 
 const canContinue = computed(() => !!regionId.value)
+
+const regionOptions = computed(() => regions.value.map((r) => ({ value: r.id, label: r.name })))
+const districtOptions = computed(() => districts.value.map((d) => ({ value: d.id, label: d.name })))
 
 async function loadDistricts(id: number) {
   districtId.value = null
@@ -76,16 +82,15 @@ async function onSubmit() {
       latitude: coords.value?.lat,
       longitude: coords.value?.lng,
     })
+    // Refresh onboarding state, otherwise the router guard still believes no
+    // region is set and bounces us straight back here.
+    await auth.fetchMe().catch(() => undefined)
     router.push({ name: 'home' })
   } catch (e) {
     error.value = extractErrorMessage(e)
   } finally {
     saving.value = false
   }
-}
-
-function skip() {
-  router.push({ name: 'home' })
 }
 
 onMounted(async () => {
@@ -112,29 +117,23 @@ onMounted(async () => {
         </div>
       </label>
 
-      <label class="block">
-        <span class="block text-sm font-medium text-ink-secondary mb-1.5">Viloyat</span>
-        <select
-          v-model.number="regionId"
-          class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
-          @change="onRegionChange"
-        >
-          <option :value="null" disabled>Viloyatni tanlang</option>
-          <option v-for="r in regions" :key="r.id" :value="r.id">{{ r.name }}</option>
-        </select>
-      </label>
+      <AppSelect
+        v-model="regionId"
+        label="Viloyat"
+        placeholder="Viloyatni tanlang"
+        numeric
+        :options="regionOptions"
+        @update:model-value="onRegionChange"
+      />
 
-      <label class="block">
-        <span class="block text-sm font-medium text-ink-secondary mb-1.5">Tuman (ixtiyoriy)</span>
-        <select
-          v-model.number="districtId"
-          :disabled="!regionId"
-          class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100 disabled:bg-surface-muted disabled:text-ink-faint"
-        >
-          <option :value="null">Tuman tanlanmagan</option>
-          <option v-for="d in districts" :key="d.id" :value="d.id">{{ d.name }}</option>
-        </select>
-      </label>
+      <AppSelect
+        v-model="districtId"
+        label="Tuman (ixtiyoriy)"
+        placeholder="Tuman tanlanmagan"
+        numeric
+        :disabled="!regionId"
+        :options="districtOptions"
+      />
 
       <button
         type="button"
@@ -148,11 +147,10 @@ onMounted(async () => {
 
       <p v-if="error" class="text-sm text-danger text-center">{{ error }}</p>
 
+      <!-- No "skip": Rivex is a location-based product and every feed query
+           needs a region, so one dropdown is required rather than offering a
+           skip that the router guard would immediately undo. -->
       <AppButton :disabled="!canContinue" :loading="saving" @click="onSubmit">Davom etish</AppButton>
-
-      <button type="button" class="w-full text-center text-sm text-ink-faint" @click="skip">
-        Keyinroq
-      </button>
     </div>
   </AuthLayout>
 </template>

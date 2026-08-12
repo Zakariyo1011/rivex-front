@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import ActivityCard from '@/components/activity/ActivityCard.vue'
+import VerificationBanner from '@/components/verification/VerificationBanner.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -68,6 +69,8 @@ onMounted(load)
           <span v-else>{{ auth.user?.name?.[0] }}</span>
         </RouterLink>
       </div>
+
+      <VerificationBanner class="mb-5" />
 
       <button
         class="w-full h-12 rounded-xl bg-surface border-2 border-primary-200 shadow-sm px-4 flex items-center gap-2.5 text-left text-ink-faint mb-6 hover:border-primary-400 hover:shadow-md transition"

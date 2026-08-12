@@ -17,6 +17,8 @@ export default {
     somethingWrong: 'Nimadir xato ketdi',
   },
   notifications: {
+    seeAll: 'Barchasini ko\'rish',
+    settings: 'Bildirishnoma sozlamalari',
     title: 'Bildirishnomalar',
     empty: 'Hozircha bildirishnoma yo\'q',
     markAllRead: 'Barchasini o\'qilgan deb belgilash',

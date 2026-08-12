@@ -69,6 +69,24 @@ onMounted(load)
           <FontAwesomeIcon :icon="icons.location" class="text-ink-faint text-xs" /> {{ user.profile.location_name }}
         </p>
 
+        <!-- Verification is a fact about the account; rating and trust score are
+             judgements about behaviour. They are shown as separate signals on
+             purpose — a verified newcomer is not the same as a trusted regular. -->
+        <div class="flex items-center justify-center gap-2 mt-3 flex-wrap">
+          <span
+            v-if="user.identity_verified"
+            class="inline-flex items-center gap-1.5 rounded-full bg-primary-50 text-primary-700 text-xs font-medium px-2.5 py-1"
+          >
+            <FontAwesomeIcon :icon="icons.identity" /> Shaxsi tasdiqlangan
+          </span>
+          <span
+            v-if="user.phone_verified"
+            class="inline-flex items-center gap-1.5 rounded-full bg-success-bg text-success text-xs font-medium px-2.5 py-1"
+          >
+            <FontAwesomeIcon :icon="icons.phone" /> Telefon tasdiqlangan
+          </span>
+        </div>
+
         <div class="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border">
           <div>
             <p class="font-bold text-ink">{{ user.rating_average ?? '—' }}</p>

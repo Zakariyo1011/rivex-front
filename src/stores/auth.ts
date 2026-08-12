@@ -3,14 +3,17 @@ import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import { disconnectEcho } from '@/composables/useEcho'
-import type { User } from '@/types'
+import type { OnboardingState, User } from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(localStorage.getItem('rivex_token'))
   const pendingPhone = ref<string | null>(null)
+  const onboarding = ref<OnboardingState | null>(null)
+  let inFlight: Promise<unknown> | null = null
 
   const isAuthenticated = computed(() => !!token.value)
+  const isIdentityVerified = computed(() => user.value?.verification_status === 'verified')
 
   function setSession(newUser: User, newToken: string) {
     user.value = newUser
@@ -21,6 +24,8 @@ export const useAuthStore = defineStore('auth', () => {
   function clearSession() {
     user.value = null
     token.value = null
+    onboarding.value = null
+    inFlight = null
     localStorage.removeItem('rivex_token')
     useNotificationsStore().reset()
     disconnectEcho()
@@ -60,18 +65,38 @@ export const useAuthStore = defineStore('auth', () => {
   async function fetchMe() {
     const { data } = await authApi.me()
     user.value = data.data
+    onboarding.value = data.onboarding ?? null
     return data.data
   }
 
+  /**
+   * Fetches /me at most once per session, and de-duplicates concurrent callers
+   * so the router guard and the app shell cannot fire two requests on load.
+   * Returns silently on failure — a network blip must not lock the user out;
+   * the axios 401 interceptor already handles a genuinely dead session.
+   */
+  function ensureLoaded() {
+    if (!token.value) return Promise.resolve()
+    if (onboarding.value) return Promise.resolve()
+
+    inFlight ??= fetchMe()
+      .catch(() => undefined)
+      .finally(() => {
+        inFlight = null
+      })
+
+    return inFlight
+  }
+
   async function verifyPhone(code: string) {
-    if (!pendingPhone.value && user.value) pendingPhone.value = user.value.phone
+    if (!pendingPhone.value && user.value) pendingPhone.value = user.value.phone ?? null
     if (!pendingPhone.value) throw new Error('No phone pending verification')
     await authApi.verifyPhone({ phone: pendingPhone.value, code })
     await fetchMe()
   }
 
   async function resendOtp() {
-    if (!pendingPhone.value && user.value) pendingPhone.value = user.value.phone
+    if (!pendingPhone.value && user.value) pendingPhone.value = user.value.phone ?? null
     if (!pendingPhone.value) throw new Error('No phone pending verification')
     return authApi.resendOtp({ phone: pendingPhone.value })
   }
@@ -79,8 +104,11 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     user,
     token,
+    onboarding,
     isAuthenticated,
+    isIdentityVerified,
     pendingPhone,
+    ensureLoaded,
     register,
     login,
     logout,

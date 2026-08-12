@@ -7,6 +7,7 @@ import { adminApi } from '@/api/admin'
 import { icons } from '@/lib/icons'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import type { DashboardStats } from '@/types'
+import { formatMoney } from '@/lib/datetime'
 
 const stats = ref<DashboardStats | null>(null)
 const loading = ref(true)
@@ -18,7 +19,7 @@ const cards = (s: DashboardStats): { label: string; value: string | number; icon
   { label: 'Bugungi faoliyatlar', value: s.activities_today, icon: icons.today },
   { label: 'Yakunlangan faoliyatlar', value: s.completed_activities, icon: icons.completedFlag },
   { label: 'Tranzaksiyalar', value: s.total_transactions, icon: icons.payment },
-  { label: 'Platforma daromadi', value: `${s.platform_revenue.toLocaleString()} UZS`, icon: icons.amount },
+  { label: 'Platforma daromadi', value: formatMoney(s.platform_revenue), icon: icons.amount },
   { label: "Ko'rib chiqilmagan shikoyatlar", value: s.pending_reports, icon: icons.report, alert: s.pending_reports > 0 },
   { label: 'Kutilayotgan tasdiqlar', value: s.pending_verifications, icon: icons.identity, alert: s.pending_verifications > 0 },
 ]

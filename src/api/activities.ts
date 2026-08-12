@@ -1,20 +1,28 @@
 import client from './client'
 import type { Activity, PaginatedResponse } from '@/types'
 
+export type ActivitySort = 'nearest' | 'newest' | 'popular' | 'starting_soon' | 'price_low' | 'price_high'
+
+export type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night'
+
 export interface ActivityFilters {
+  /** Matched against title, description, location, category and region/district. */
   q?: string
   category_id?: number
   date?: 'today' | 'tomorrow' | string
+  time_of_day?: TimeOfDay
   payment?: 'free' | 'paid'
   min_amount?: number
   max_amount?: number
+  people_needed?: number
   verified_only?: boolean
   region_id?: number
   district_id?: number
+  /** Only meaningful together with lng; enables distance sorting and radius. */
   lat?: number
   lng?: number
   radius_km?: number
-  sort?: 'nearest' | 'newest' | 'price_low' | 'price_high'
+  sort?: ActivitySort
   page?: number
 }
 
@@ -62,8 +70,9 @@ export const activitiesApi = {
     formData.append('_method', 'PUT')
     return client.post<{ data: Activity }>(`/activities/${id}`, formData)
   },
-  cancel(id: number) {
-    return client.post<{ data: Activity }>(`/activities/${id}/cancel`)
+  /** A reason is required — cancellation patterns feed the trust score. */
+  cancel(id: number, reason: string, note?: string) {
+    return client.post<{ data: Activity }>(`/activities/${id}/cancel`, { reason, note })
   },
   destroy(id: number) {
     return client.delete(`/activities/${id}`)

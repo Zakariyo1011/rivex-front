@@ -8,6 +8,7 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import { adminApi } from '@/api/admin'
 import { icons } from '@/lib/icons'
 import type { Report } from '@/types'
+import { formatDateTime } from '@/lib/datetime'
 
 const reports = ref<Report[]>([])
 const loading = ref(true)
@@ -104,7 +105,7 @@ onMounted(load)
         </div>
         <p class="text-sm text-primary-600 font-medium mb-1">{{ reasonLabels[report.reason] ?? report.reason }}</p>
         <p v-if="report.description" class="text-sm text-ink-muted mb-3">{{ report.description }}</p>
-        <p class="text-xs text-ink-faint mb-3">{{ new Date(report.created_at).toLocaleString('uz-UZ') }}</p>
+        <p class="text-xs text-ink-faint mb-3">{{ formatDateTime(report.created_at) }}</p>
 
         <div v-if="report.status === 'pending'" class="flex gap-3">
           <button

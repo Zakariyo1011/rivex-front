@@ -6,6 +6,7 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import { adminApi } from '@/api/admin'
 import type { Withdrawal } from '@/types'
+import {formatDate, formatMoney} from '@/lib/datetime'
 
 const withdrawals = ref<Withdrawal[]>([])
 const loading = ref(true)
@@ -108,8 +109,8 @@ onMounted(load)
                 {{ withdrawal.user.name }}
               </RouterLink>
             </td>
-            <td class="px-5 py-3 font-semibold text-ink">{{ withdrawal.amount.toLocaleString() }} UZS</td>
-            <td class="px-5 py-3 text-ink-muted">{{ new Date(withdrawal.created_at).toLocaleDateString('uz-UZ') }}</td>
+            <td class="px-5 py-3 font-semibold text-ink">{{ formatMoney(withdrawal.amount) }}</td>
+            <td class="px-5 py-3 text-ink-muted">{{ formatDate(withdrawal.created_at) }}</td>
             <td class="px-5 py-3">
               <StatusBadge :status="withdrawal.status" :labels="statusLabels" :variants="statusVariants" />
             </td>

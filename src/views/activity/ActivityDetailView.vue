@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
@@ -8,23 +8,42 @@ import AppTextarea from '@/components/ui/AppTextarea.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import Avatar from '@/components/ui/Avatar.vue'
+import Rating from '@/components/ui/Rating.vue'
 import VerificationBadge from '@/components/ui/VerificationBadge.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import ReportBlockMenu from '@/components/profile/ReportBlockMenu.vue'
+import ActivityLocationCard from '@/components/activity/ActivityLocationCard.vue'
+import CancelActivityModal from '@/components/activity/CancelActivityModal.vue'
+import NoShowReportModal from '@/components/activity/NoShowReportModal.vue'
+import ReviewModal from '@/components/activity/ReviewModal.vue'
 import { activitiesApi } from '@/api/activities'
 import { applicationsApi } from '@/api/applications'
 import { matchesApi } from '@/api/matches'
 import { invoicesApi } from '@/api/invoices'
 import { useAuthStore } from '@/stores/auth'
-import { useNotificationsStore } from '@/stores/notifications'
+import { useEchoChannel } from '@/composables/useEchoChannel'
+import { onEchoReconnect } from '@/composables/useEcho'
+import { useToast } from '@/composables/useToast'
 import { extractErrorMessage } from '@/composables/useApiError'
+import { useVerificationGuard } from '@/composables/useVerificationGuard'
 import { categoryIcon, icons } from '@/lib/icons'
-import type { Activity, ActivityMatch, Application, ActivityStatus, Invoice } from '@/types'
+import type {
+  Activity,
+  ActivityMatch,
+  ActivityStatus,
+  Application,
+  CancellationReason,
+  Invoice,
+  User,
+} from '@/types'
+import { formatActivityStartLong, formatMoney } from '@/lib/datetime'
+import { activityStatus, cancellationReasons } from '@/lib/statusLabels'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const notifications = useNotificationsStore()
+const toast = useToast()
+const verificationGuard = useVerificationGuard()
 
 const activity = ref<Activity | null>(null)
 const match = ref<ActivityMatch | null>(null)
@@ -36,7 +55,27 @@ const message = ref('')
 const applying = ref(false)
 const myApplication = ref<Application | null>(null)
 const error = ref('')
-const cancelling = ref(false)
+const showCancelModal = ref(false)
+const noShowTarget = ref<User | null>(null)
+const reviewTarget = ref<User | null>(null)
+
+/**
+ * Server-computed: who the caller may still review here. Empty for anyone who
+ * did not take part, and it shrinks as reviews are submitted.
+ */
+const reviewableUsers = computed(() => activity.value?.my_reviewable_users ?? [])
+
+function onReviewSubmitted(revieweeId: number) {
+  reviewTarget.value = null
+
+  // Drop the person locally so the prompt updates at once; the next load
+  // re-reads the authoritative list from the server anyway.
+  if (activity.value?.my_reviewable_users) {
+    activity.value.my_reviewable_users = activity.value.my_reviewable_users.filter(
+      (u) => u.id !== revieweeId,
+    )
+  }
+}
 const confirming = ref(false)
 const payingInvoiceId = ref<number | null>(null)
 
@@ -50,7 +89,7 @@ const paymentLabel = computed(() => {
     case 'free':
       return 'Bepul'
     case 'shared_cost':
-      return `Umumiy xarajat — ${activity.value.amount.toLocaleString()} UZS / kishi`
+      return `Umumiy xarajat — ${formatMoney(activity.value.amount)} / kishi`
     case 'owner_pays':
       return "Sherikka to'lanadi"
     case 'participant_pays':
@@ -60,31 +99,15 @@ const paymentLabel = computed(() => {
   }
 })
 
-const statusLabels: Record<ActivityStatus, string> = {
-  draft: 'Qoralama',
-  published: "E'lon qilingan",
-  full: "To'lgan",
-  in_progress: 'Davom etmoqda',
-  completed: 'Yakunlangan',
-  cancelled: 'Bekor qilingan',
-  expired: "Muddati o'tgan",
-}
-
-const statusVariants: Record<ActivityStatus, 'primary' | 'success' | 'danger' | 'neutral'> = {
-  draft: 'neutral',
-  published: 'primary',
-  full: 'success',
-  in_progress: 'success',
-  completed: 'neutral',
-  cancelled: 'danger',
-  expired: 'neutral',
-}
-
-const myOwedInvoice = computed(() => invoices.value.find((i) => !['paid', 'cancelled'].includes(i.status)))
+const myOwedInvoice = computed(() =>
+  invoices.value.find((i) => !['paid', 'cancelled'].includes(i.status)),
+)
 const myPaidInvoice = computed(() => invoices.value.find((i) => i.status === 'paid'))
 
 const iHaveConfirmedCompletion = computed(() =>
-  isOwner.value ? !!activity.value?.owner_confirmed_completed_at : !!activity.value?.my_participation_confirmed_at,
+  isOwner.value
+    ? !!activity.value?.owner_confirmed_completed_at
+    : !!activity.value?.my_participation_confirmed_at,
 )
 
 const canConfirmCompletion = computed(
@@ -108,7 +131,8 @@ async function load() {
     activity.value = data.data
     myApplication.value =
       myApplications.data.data.find(
-        (a) => a.activity.id === data.data.id && a.status !== 'cancelled' && a.status !== 'rejected',
+        (a) =>
+          a.activity.id === data.data.id && a.status !== 'cancelled' && a.status !== 'rejected',
       ) ?? null
 
     if (activity.value.status !== 'published' && activity.value.status !== 'draft') {
@@ -138,21 +162,18 @@ async function submitApply() {
     myApplication.value = data.data
     showApplyModal.value = false
   } catch (e) {
+    // A verification refusal is not an error to display — it is a redirect to
+    // the screen that unblocks the user.
+    if (verificationGuard.handle(e)) return
     error.value = extractErrorMessage(e)
   } finally {
     applying.value = false
   }
 }
 
-async function cancelActivity() {
-  if (!activity.value) return
-  cancelling.value = true
-  try {
-    const { data } = await activitiesApi.cancel(activity.value.id)
-    activity.value = data.data
-  } finally {
-    cancelling.value = false
-  }
+/** Cancelling now needs a reason, so it goes through a modal. */
+function onCancelled(updated: Activity) {
+  activity.value = updated
 }
 
 async function confirmCompletion() {
@@ -193,17 +214,55 @@ async function payInvoice(invoice: Invoice) {
   }
 }
 
-const relevantTypes = ['application_accepted', 'application_rejected', 'new_application']
-
-watch(
-  () => notifications.notifications[0],
-  (latest) => {
-    if (!latest || !activity.value) return
-    if (!relevantTypes.includes(latest.type)) return
-    if (latest.data.activity_id !== activity.value.id) return
-    load()
-  },
+const cancellationLabel = computed(
+  () =>
+    cancellationReasons.find((r) => r.value === activity.value?.cancellation_reason)?.label ?? null,
 )
+
+/**
+ * Live updates for this activity.
+ *
+ * This used to watch the head of the notification list and re-fetch when a
+ * relevant one appeared — a workaround from before activity events existed. It
+ * only worked for the three notification types it knew about, fired a full
+ * reload for each, and did nothing at all for the organiser cancelling or the
+ * scheduler starting the activity. It is replaced by the real channel.
+ *
+ * Only owner and accepted participants are authorised on `activity.{id}`, so a
+ * browsing stranger simply gets no live updates — which is the correct
+ * privacy answer, not a gap.
+ */
+useEchoChannel(() => (activity.value ? `activity.${activity.value.id}` : null), {
+  listeners: {
+    '.ActivityStatusChanged': (payload: { status: ActivityStatus }) => {
+      if (activity.value) activity.value.status = payload.status
+    },
+    '.ActivityCancelled': (payload: {
+      status: ActivityStatus
+      cancellation_reason: CancellationReason | null
+      cancellation_note: string | null
+      cancelled_at: string | null
+    }) => {
+      if (!activity.value) return
+
+      activity.value.status = payload.status
+      activity.value.cancellation_reason = payload.cancellation_reason
+      activity.value.cancellation_note = payload.cancellation_note
+      activity.value.cancelled_at = payload.cancelled_at
+
+      toast.info('Bu faoliyat bekor qilindi.')
+    },
+    // A new participant changes the roster and possibly the invoice, both of
+    // which come from the server rather than being guessable here.
+    '.ParticipantJoined': () => void load(),
+    '.MatchCreated': () => void load(),
+  },
+})
+
+// Anything that happened while the socket was down was missed outright.
+onEchoReconnect(() => {
+  if (activity.value) void load()
+})
 
 onMounted(load)
 </script>
@@ -228,22 +287,27 @@ onMounted(load)
       <div v-if="activity.image_url" class="w-full h-56 md:h-72 md:rounded-b-3xl overflow-hidden">
         <img :src="activity.image_url" class="w-full h-full object-cover" />
       </div>
-      <div v-else class="w-full h-40 md:h-56 md:rounded-b-3xl bg-primary-50 flex items-center justify-center text-primary-300 text-5xl">
+      <div
+        v-else
+        class="w-full h-40 md:h-56 md:rounded-b-3xl bg-primary-50 flex items-center justify-center text-primary-300 text-5xl"
+      >
         <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" />
       </div>
 
       <div class="px-4 md:px-8 -mt-6 md:mt-6 relative">
         <div class="card p-5">
           <div class="flex items-center justify-between mb-1">
-            <span class="text-xs font-semibold text-primary-600 bg-primary-50 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+            <span
+              class="text-xs font-semibold text-primary-600 bg-primary-50 px-2.5 py-1 rounded-full flex items-center gap-1.5"
+            >
               <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-[10px]" />
               {{ activity.category.name }}
             </span>
             <StatusBadge
               v-if="activity.status !== 'published'"
               :status="activity.status"
-              :labels="statusLabels"
-              :variants="statusVariants"
+              :labels="activityStatus.labels"
+              :variants="activityStatus.variants"
             />
           </div>
 
@@ -252,11 +316,7 @@ onMounted(load)
           <div class="mt-3 space-y-1.5 text-sm text-ink-muted">
             <p class="flex items-center gap-2">
               <FontAwesomeIcon :icon="icons.time" class="text-ink-faint w-4" />
-              {{ new Date(activity.start_at).toLocaleString('uz-UZ') }}
-            </p>
-            <p class="flex items-center gap-2">
-              <FontAwesomeIcon :icon="icons.location" class="text-ink-faint w-4" />
-              {{ activity.location_name }}
+              {{ formatActivityStartLong(activity.start_at) }}
             </p>
             <p class="flex items-center gap-2">
               <FontAwesomeIcon :icon="icons.people" class="text-ink-faint w-4" />
@@ -264,14 +324,35 @@ onMounted(load)
             </p>
           </div>
 
+          <!-- Meeting point, with an opt-in map. Replaces the plain location
+               line above; the organiser's home location is never shown. -->
+          <ActivityLocationCard :activity="activity" class="mt-4" />
+
+          <div
+            v-if="activity.status === 'cancelled'"
+            class="mt-4 rounded-xl bg-danger-bg text-danger px-4 py-3 text-sm"
+          >
+            <p class="font-semibold">Bu faoliyat bekor qilingan</p>
+            <p v-if="cancellationLabel" class="mt-0.5">Sababi: {{ cancellationLabel }}</p>
+            <p v-if="activity.cancellation_note" class="mt-0.5 opacity-90">
+              {{ activity.cancellation_note }}
+            </p>
+          </div>
+
           <div
             class="mt-4 rounded-xl px-4 py-3"
             :class="activity.payment_type === 'free' ? 'bg-surface-muted' : 'bg-primary-50'"
           >
-            <p class="font-bold text-lg" :class="activity.payment_type === 'free' ? 'text-ink' : 'text-primary-700'">
-              {{ activity.payment_type === 'free' ? 'Bepul' : `${activity.amount.toLocaleString()} UZS` }}
+            <p
+              class="font-bold text-lg"
+              :class="activity.payment_type === 'free' ? 'text-ink' : 'text-primary-700'"
+            >
+              {{ activity.payment_type === 'free' ? 'Bepul' : formatMoney(activity.amount) }}
             </p>
-            <p class="text-sm" :class="activity.payment_type === 'free' ? 'text-ink-muted' : 'text-primary-500'">
+            <p
+              class="text-sm"
+              :class="activity.payment_type === 'free' ? 'text-ink-muted' : 'text-primary-500'"
+            >
               {{ paymentLabel }}
             </p>
           </div>
@@ -282,20 +363,32 @@ onMounted(load)
           </div>
 
           <div class="mt-5 pt-5 border-t border-border flex items-center justify-between gap-3">
-            <RouterLink :to="{ name: 'user-profile', params: { id: activity.owner.id } }" class="flex items-center gap-3 min-w-0">
-              <Avatar :src="activity.owner.profile.avatar_url" :name="activity.owner.name" size="lg" />
+            <RouterLink
+              :to="{ name: 'user-profile', params: { id: activity.owner.id } }"
+              class="flex items-center gap-3 min-w-0"
+            >
+              <Avatar
+                :src="activity.owner.profile.avatar_url"
+                :name="activity.owner.name"
+                size="lg"
+              />
               <div class="min-w-0 flex-1">
                 <p class="font-semibold text-ink flex items-center gap-1.5">
                   {{ activity.owner.name }}
                   <VerificationBadge v-if="activity.owner.identity_verified" compact />
                 </p>
-                <p v-if="activity.owner.rating_average" class="text-sm text-ink-muted flex items-center gap-1">
-                  <FontAwesomeIcon :icon="icons.starSolid" class="text-star" />
-                  {{ activity.owner.rating_average }} ({{ activity.owner.reviews_count }} sharh)
-                </p>
+                <Rating
+                  v-if="activity.owner.rating_average"
+                  :value="activity.owner.rating_average"
+                  :count="activity.owner.reviews_count"
+                />
               </div>
             </RouterLink>
-            <ReportBlockMenu v-if="!isOwner" :user-id="activity.owner.id" :user-name="activity.owner.name" />
+            <ReportBlockMenu
+              v-if="!isOwner"
+              :user-id="activity.owner.id"
+              :user-name="activity.owner.name"
+            />
           </div>
         </div>
 
@@ -303,22 +396,29 @@ onMounted(load)
         <div v-if="match && myOwedInvoice" class="card p-5 mt-4">
           <h2 class="font-semibold text-ink mb-1">Platforma komissiyasi</h2>
           <p class="text-sm text-ink-muted mb-3">
-            Faoliyat summasi ({{ activity.amount.toLocaleString() }} UZS) tomonlar o'rtasida hal qilinadi. Rivex faqat
-            o'z xizmat haqini oladi.
+            Faoliyat summasi ({{ formatMoney(activity.amount) }}) tomonlar o'rtasida hal qilinadi.
+            Rivex faqat o'z xizmat haqini oladi.
           </p>
           <div class="rounded-xl bg-primary-50 px-4 py-3 mb-3">
-            <p class="font-bold text-lg text-primary-700">{{ myOwedInvoice.amount.toLocaleString() }} UZS</p>
+            <p class="font-bold text-lg text-primary-700">
+              {{ formatMoney(myOwedInvoice.amount) }}
+            </p>
             <p class="text-sm text-primary-500">Komissiya ({{ myOwedInvoice.commission_rate }}%)</p>
           </div>
           <p v-if="error" class="text-sm text-danger mb-3">{{ error }}</p>
-          <AppButton :loading="payingInvoiceId === myOwedInvoice.id" @click="payInvoice(myOwedInvoice)">
+          <AppButton
+            :loading="payingInvoiceId === myOwedInvoice.id"
+            @click="payInvoice(myOwedInvoice)"
+          >
             To'lash
           </AppButton>
         </div>
         <div v-else-if="match && myPaidInvoice" class="card p-5 mt-4">
-          <div class="rounded-xl bg-success-bg text-success px-4 py-3 text-sm font-medium flex items-center gap-2">
+          <div
+            class="rounded-xl bg-success-bg text-success px-4 py-3 text-sm font-medium flex items-center gap-2"
+          >
             <FontAwesomeIcon :icon="icons.verified" />
-            Komissiya to'landi ({{ myPaidInvoice.amount.toLocaleString() }} UZS)
+            Komissiya to'landi ({{ formatMoney(myPaidInvoice.amount) }})
           </div>
         </div>
 
@@ -334,24 +434,27 @@ onMounted(load)
                 Arizalarni ko'rish
               </AppButton>
               <AppButton
-                v-if="!['cancelled', 'completed'].includes(activity.status)"
+                v-if="!['cancelled', 'completed', 'expired'].includes(activity.status)"
                 variant="ghost"
-                :loading="cancelling"
                 :disabled="confirming"
-                @click="cancelActivity"
+                @click="showCancelModal = true"
               >
                 Bekor qilish
               </AppButton>
             </div>
           </template>
           <template v-else-if="myApplication?.status === 'accepted'">
-            <div class="h-12 rounded-xl bg-success-bg text-success font-semibold flex items-center justify-center gap-2">
+            <div
+              class="h-12 rounded-xl bg-success-bg text-success font-semibold flex items-center justify-center gap-2"
+            >
               <FontAwesomeIcon :icon="icons.verified" />
               Arizangiz qabul qilindi!
             </div>
           </template>
           <template v-else-if="myApplication?.status === 'pending'">
-            <div class="h-12 rounded-xl bg-primary-50 text-primary-700 font-semibold flex items-center justify-center gap-2">
+            <div
+              class="h-12 rounded-xl bg-primary-50 text-primary-700 font-semibold flex items-center justify-center gap-2"
+            >
               <FontAwesomeIcon :icon="icons.pending" />
               Ariza yuborildi — javobni kuting
             </div>
@@ -360,7 +463,9 @@ onMounted(load)
             <AppButton @click="showApplyModal = true">Ariza yuborish</AppButton>
           </template>
           <template v-else>
-            <div class="h-12 rounded-xl bg-surface-muted text-ink-muted font-semibold flex items-center justify-center">
+            <div
+              class="h-12 rounded-xl bg-surface-muted text-ink-muted font-semibold flex items-center justify-center"
+            >
               Ariza qabul qilinmayapti
             </div>
           </template>
@@ -374,7 +479,9 @@ onMounted(load)
             Chatga o'tish
           </AppButton>
 
-          <template v-if="(isOwner || isParticipant) && ['full', 'in_progress'].includes(activity.status)">
+          <template
+            v-if="(isOwner || isParticipant) && ['full', 'in_progress'].includes(activity.status)"
+          >
             <AppButton
               v-if="canConfirmCompletion"
               variant="outline"
@@ -393,7 +500,58 @@ onMounted(load)
           </template>
         </div>
       </div>
+
+      <!-- Review prompt. The list is server-computed, so it appears only when
+           the activity is completed and the caller genuinely took part, and it
+           empties itself as reviews are submitted. -->
+      <div v-if="reviewableUsers.length > 0" class="px-4 md:px-8 mt-4">
+        <div class="card p-5">
+          <h2 class="font-semibold text-ink">Uchrashuv qanday o'tdi?</h2>
+          <p class="text-sm text-ink-muted mt-1 mb-3">
+            Bahoyingiz boshqalarga kim bilan uchrashayotganini tushunishga yordam beradi.
+          </p>
+
+          <div class="space-y-2">
+            <div
+              v-for="person in reviewableUsers"
+              :key="person.id"
+              class="flex items-center gap-3 rounded-xl bg-surface-muted p-3"
+            >
+              <Avatar :src="person.profile?.avatar_url" :name="person.name" size="sm" />
+              <p class="flex-1 min-w-0 font-medium text-ink truncate">{{ person.name }}</p>
+              <button
+                class="text-sm font-semibold text-primary-600 hover:underline shrink-0"
+                @click="reviewTarget = person"
+              >
+                Baho berish
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
+
+    <CancelActivityModal
+      v-if="showCancelModal && activity"
+      :activity="activity"
+      @close="showCancelModal = false"
+      @cancelled="onCancelled"
+    />
+
+    <NoShowReportModal
+      v-if="noShowTarget && activity"
+      :activity-id="activity.id"
+      :person="noShowTarget"
+      @close="noShowTarget = null"
+    />
+
+    <ReviewModal
+      v-if="reviewTarget && activity"
+      :activity-id="activity.id"
+      :reviewee="reviewTarget"
+      @close="reviewTarget = null"
+      @submitted="onReviewSubmitted"
+    />
 
     <AppModal v-if="showApplyModal" title="Ariza yuborish" @close="showApplyModal = false">
       <p class="text-sm text-ink-muted mb-3">Faoliyat egasiga xabar yozing (ixtiyoriy).</p>

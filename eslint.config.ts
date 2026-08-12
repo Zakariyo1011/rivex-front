@@ -20,6 +20,23 @@ export default defineConfigWithVueTs(
   ...pluginVue.configs['flat/essential'],
   vueTsConfigs.recommended,
 
+  {
+    /**
+     * The design system deliberately uses the plain names for its primitives —
+     * Avatar, Skeleton, Pagination, Rating, Tooltip — because that is what they
+     * are called everywhere else, and they are always used via an explicit
+     * import rather than global registration, so there is nothing to collide
+     * with. Renaming them would churn every consumer for no benefit.
+     *
+     * Application components keep the rule.
+     */
+    name: 'app/design-system-primitives',
+    files: ['src/components/ui/**/*.vue', 'src/components/layout/**/*.vue'],
+    rules: {
+      'vue/multi-word-component-names': 'off',
+    },
+  },
+
   ...pluginOxlint.buildFromOxlintConfigFile('.oxlintrc.json'),
 
   skipFormatting,

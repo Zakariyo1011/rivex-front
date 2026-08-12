@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import { icons } from '@/lib/icons'
@@ -10,16 +10,27 @@ const router = useRouter()
 const admin = useAdminStore()
 const mobileNavOpen = ref(false)
 
-const items = [
-  { name: 'admin-dashboard', label: 'Dashboard', icon: icons.dashboard },
-  { name: 'admin-users', label: 'Users', icon: icons.people },
-  { name: 'admin-activities', label: 'Activities', icon: icons.activities },
-  { name: 'admin-reports', label: 'Reports', icon: icons.report },
-  { name: 'admin-verifications', label: 'Verification', icon: icons.identity },
-  { name: 'admin-withdrawals', label: 'Withdrawals', icon: icons.amount },
-  { name: 'admin-settings', label: 'Settings', icon: icons.settings },
-  { name: 'admin-audit-logs', label: 'Audit Logs', icon: icons.auditLog },
+/**
+ * Navigation, with the permission that makes each entry reachable.
+ *
+ * Presentation only: the server refuses the endpoint regardless, so a stale
+ * client that shows an extra entry produces a 403, not a leak. The permission
+ * strings match `App\Enums\AdminPermission`.
+ */
+const allItems = [
+  { name: 'admin-dashboard', label: 'Dashboard', icon: icons.dashboard, permission: 'dashboard.view' },
+  { name: 'admin-users', label: 'Users', icon: icons.people, permission: 'users.view' },
+  { name: 'admin-activities', label: 'Activities', icon: icons.activities, permission: 'activities.view' },
+  { name: 'admin-reports', label: 'Reports', icon: icons.report, permission: 'reports.view' },
+  { name: 'admin-verifications', label: 'Verification', icon: icons.identity, permission: 'verification.view' },
+  { name: 'admin-disputes', label: 'Disputes', icon: icons.trust, permission: 'disputes.view' },
+  { name: 'admin-withdrawals', label: 'Withdrawals', icon: icons.amount, permission: 'withdrawals.view' },
+  { name: 'admin-settings', label: 'Settings', icon: icons.settings, permission: 'settings.view' },
+  { name: 'admin-audit-logs', label: 'Audit Logs', icon: icons.auditLog, permission: 'audit-logs.view' },
+  { name: 'admin-admins', label: 'Admins', icon: icons.lock, permission: 'admins.manage' },
 ]
+
+const items = computed(() => allItems.filter((item) => admin.can(item.permission)))
 
 watch(() => route.name, () => {
   mobileNavOpen.value = false
@@ -78,7 +89,7 @@ async function logout() {
 
       <div class="border-t border-border pt-4 px-2">
         <p class="hidden desktop:block text-sm font-semibold text-ink">{{ admin.admin?.name }}</p>
-        <p class="hidden desktop:block text-xs text-ink-faint mb-3">{{ admin.admin?.role }}</p>
+        <p class="hidden desktop:block text-xs text-ink-faint mb-3">{{ admin.admin?.role_label ?? admin.admin?.role }}</p>
         <button
           class="text-sm text-danger font-medium flex items-center gap-1.5 justify-center desktop:justify-start w-full"
           @click="logout"
@@ -108,7 +119,7 @@ async function logout() {
       </nav>
       <div class="border-t border-border mt-4 pt-4">
         <p class="text-sm font-semibold text-ink">{{ admin.admin?.name }}</p>
-        <p class="text-xs text-ink-faint mb-3">{{ admin.admin?.role }}</p>
+        <p class="text-xs text-ink-faint mb-3">{{ admin.admin?.role_label ?? admin.admin?.role }}</p>
         <button class="text-sm text-danger font-medium flex items-center gap-1.5" @click="logout">
           <FontAwesomeIcon :icon="icons.logout" />
           Chiqish

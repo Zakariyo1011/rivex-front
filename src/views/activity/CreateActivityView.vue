@@ -9,11 +9,14 @@ import { activitiesApi } from '@/api/activities'
 import { categoriesApi } from '@/api/categories'
 import { locationsApi } from '@/api/locations'
 import { extractErrorMessage } from '@/composables/useApiError'
+import { useVerificationGuard } from '@/composables/useVerificationGuard'
 import { icons } from '@/lib/icons'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import type { Category, District, PaymentType, Region } from '@/types'
+import { formatMoney } from '@/lib/datetime'
 
 const router = useRouter()
+const verificationGuard = useVerificationGuard()
 
 const step = ref(1)
 const totalSteps = 4
@@ -105,6 +108,9 @@ async function publish() {
     })
     router.push({ name: 'activity-detail', params: { id: data.data.id } })
   } catch (e) {
+    // Paid activities need a verified identity — send them to KYC rather than
+    // showing a refusal they cannot act on.
+    if (verificationGuard.handle(e)) return
     error.value = extractErrorMessage(e)
   } finally {
     submitting.value = false
@@ -284,7 +290,7 @@ async function publish() {
           </p>
           <p class="text-sm text-ink-muted flex items-center gap-2">
             <FontAwesomeIcon :icon="icons.amount" class="text-ink-faint w-4" />
-            {{ form.payment_type === 'free' ? 'Bepul' : `${form.amount.toLocaleString()} UZS` }}
+            {{ form.payment_type === 'free' ? 'Bepul' : formatMoney(form.amount) }}
           </p>
         </div>
 

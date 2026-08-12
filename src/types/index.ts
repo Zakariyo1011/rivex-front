@@ -9,9 +9,16 @@ export interface Profile {
 export interface User {
   id: number
   name: string
-  phone: string
+  /**
+   * Only ever present for the signed-in user themselves (and for admins in the
+   * admin panel). Embedded and broadcast payloads carry the `phone_verified`
+   * badge instead — never the number.
+   */
+  phone?: string
   phone_verified: boolean
   identity_verified: boolean
+  /** Coarse status only — no document, number or file ever reaches the client. */
+  verification_status: KycStatus
   status: string
   profile: Profile
   rating_average?: number | null
@@ -56,13 +63,7 @@ export interface UserLocation {
 
 export type PaymentType = 'free' | 'shared_cost' | 'owner_pays' | 'participant_pays'
 export type ActivityStatus =
-  | 'draft'
-  | 'published'
-  | 'full'
-  | 'in_progress'
-  | 'completed'
-  | 'cancelled'
-  | 'expired'
+  'draft' | 'published' | 'full' | 'in_progress' | 'completed' | 'cancelled' | 'expired'
 
 export interface Activity {
   id: number
@@ -81,8 +82,18 @@ export interface Activity {
   amount: number
   status: ActivityStatus
   owner_confirmed_completed_at: string | null
+  cancellation_reason: CancellationReason | null
+  cancellation_note: string | null
+  cancelled_at: string | null
+  cancelled_late: boolean
   my_participant_id?: number
   my_participation_confirmed_at?: string | null
+  /**
+   * People the caller may still review on this activity. Server-computed and
+   * present only on the detail endpoint; empty unless the activity is
+   * completed and the caller took part.
+   */
+  my_reviewable_users?: User[]
   distance_km?: number
   owner: User
   created_at: string
@@ -99,7 +110,8 @@ export interface Application {
   created_at: string
 }
 
-export interface MatchParticipant extends User {}
+/** A user in the context of a match. Alias, not a distinct shape. */
+export type MatchParticipant = User
 
 export interface ActivityMatch {
   id: number
@@ -115,6 +127,8 @@ export interface Message {
   body: string
   type: 'text' | 'image'
   sender: User
+  /** When the other side read it, or null. Absent on optimistic local rows. */
+  read_at?: string | null
   created_at: string
   pending?: boolean
   failed?: boolean
@@ -128,6 +142,32 @@ export interface AppNotification {
   data: Record<string, unknown>
   read: boolean
   created_at: string
+}
+
+export type NotificationCategoryKey =
+  | 'activity'
+  | 'applications'
+  | 'chat'
+  | 'payments'
+  | 'reminders'
+  | 'security'
+  | 'verification'
+
+export type NotificationChannelKey = 'in_app' | 'email' | 'sms'
+
+/** category -> channel -> enabled. Always complete: the server merges defaults. */
+export type NotificationPreferences = Record<
+  NotificationCategoryKey,
+  Record<NotificationChannelKey, boolean>
+>
+
+/**
+ * Labels and disabled states come from the server so the client does not keep a
+ * second, drifting copy of which categories exist and which channels work.
+ */
+export interface NotificationPreferencesMeta {
+  categories: { value: NotificationCategoryKey; label: string; optional: boolean }[]
+  channels: { value: NotificationChannelKey; label: string; available: boolean }[]
 }
 
 export interface Review {
@@ -167,12 +207,7 @@ export interface WalletTransaction {
 }
 
 export type PaymentStatus =
-  | 'pending'
-  | 'waiting_for_payment'
-  | 'paid'
-  | 'failed'
-  | 'cancelled'
-  | 'refunded'
+  'pending' | 'waiting_for_payment' | 'paid' | 'failed' | 'cancelled' | 'refunded'
 
 /** Invoices additionally lapse at their due date. */
 export type InvoiceStatus = PaymentStatus | 'expired'
@@ -222,13 +257,48 @@ export interface Report {
   created_at: string
 }
 
+/**
+ * Wire value is `not_verified`, not `unverified` — the column and the admin
+ * panel have always used that spelling, so it was kept rather than renamed.
+ * `needs_review` means an automated provider could not decide and a human is
+ * looking; the user has nothing to do but wait.
+ */
+export type KycStatus = 'not_verified' | 'pending' | 'verified' | 'rejected' | 'needs_review'
+
+export type KycDocType = 'passport' | 'id_card'
+
+/** Metadata only — the file bytes are admin-review-only and never linked here. */
+export interface VerificationDocument {
+  id: number
+  doc_type: KycDocType | 'selfie'
+  mime_type: string | null
+  size_bytes: number | null
+  /** Relative to the API base URL — the client prepends its own host. */
+  path: string
+  created_at: string
+}
+
 export interface IdentityVerification {
   id: number
-  status: 'not_verified' | 'pending' | 'verified' | 'rejected'
+  status: KycStatus
+  status_label: string
   rejection_reason: string | null
   reviewed_at: string | null
-  submitted_at: string
-  user: User
+  submitted_at: string | null
+  attempts: number
+  max_attempts: number
+  can_submit: boolean
+  user?: User
+  /** Present only for admin callers. */
+  documents?: VerificationDocument[]
+}
+
+/** Returned alongside `data` by GET /me so the router can route onboarding. */
+export interface OnboardingState {
+  phone_verified: boolean
+  location_selected: boolean
+  identity_status: KycStatus
+  completed: boolean
 }
 
 export interface Withdrawal {
@@ -249,11 +319,50 @@ export interface AuditLog {
   created_at: string
 }
 
+/** Filter choices, derived server-side from the rows that actually exist. */
+export interface AuditLogFilters {
+  actions: string[]
+  entity_types: string[]
+  admins: { id: number; name: string }[]
+}
+
+export type AdminRole = 'super_admin' | 'finance' | 'moderator' | 'support'
+
+/**
+ * Permission strings mirror `App\Enums\AdminPermission`.
+ *
+ * Typed as a plain string set rather than a literal union: the server is the
+ * authority, and a client that has not been redeployed should degrade by
+ * hiding an unknown entry, not fail to compile.
+ */
 export interface AdminUser {
   id: number
   name: string
   email: string
-  role: string
+  role: AdminRole
+  role_label: string
+  /** What this admin may do. Drives navigation only — never authorisation. */
+  permissions: string[]
+}
+
+/** An admin account as the management screen sees it. Never carries a password. */
+export interface AdminAccount {
+  id: number
+  name: string
+  email: string
+  role: AdminRole
+  role_label: string
+  permissions: string[]
+  is_active: boolean
+  password_changed_at: string | null
+  active_sessions?: number
+  created_at: string
+}
+
+export interface AdminRoleOption {
+  value: AdminRole
+  label: string
+  permissions: string[]
 }
 
 export interface DashboardStats {
@@ -281,3 +390,54 @@ export interface PaginatedResponse<T> {
     per_page: number
   }
 }
+
+export type NoShowReportStatus =
+  | 'reported'
+  | 'awaiting_response'
+  | 'confirmed'
+  | 'disputed'
+  | 'admin_review'
+  | 'resolved'
+  | 'withdrawn'
+
+export interface NoShowReport {
+  id: number
+  status: NoShowReportStatus
+  status_label: string
+  activity_id: number
+  activity?: Activity
+  reporter?: User
+  accused?: User
+  reporter_note: string | null
+  accused_response: string | null
+  response_deadline_at: string | null
+  responded_at: string | null
+  resolved_at: string | null
+  /** False once the window closed or a decision was made. */
+  can_respond: boolean
+  created_at: string
+}
+
+export type DisputeStatusValue = 'open' | 'under_review' | 'resolved'
+
+export type DisputeResolution =
+  'no_violation' | 'confirmed_no_show' | 'partial_fault' | 'cancelled' | 'refund' | 'no_refund'
+
+export interface Dispute {
+  id: number
+  status: DisputeStatusValue
+  status_label: string
+  activity_id: number
+  activity?: Activity
+  reason: string
+  resolution: DisputeResolution | null
+  resolution_label: string | null
+  resolution_note: string | null
+  resolved_at: string | null
+  no_show_report?: NoShowReport
+  opened_by?: User
+  created_at: string
+}
+
+export type CancellationReason =
+  'plans_changed' | 'time_no_longer_works' | 'no_partner_found' | 'health' | 'other'
