@@ -121,7 +121,7 @@ onMounted(async () => {
               :src="avatarPreview ?? auth.user?.profile.avatar_url!"
               class="w-full h-full object-cover"
             />
-            <span v-else>{{ auth.user?.name?.[0] }}</span>
+            <span v-else>{{ auth.user?.display_name?.[0] }}</span>
           </div>
           <span
             v-if="editing"
@@ -133,9 +133,18 @@ onMounted(async () => {
         </label>
 
         <h1 class="text-lg font-bold text-ink mt-3 flex items-center justify-center gap-1.5">
-          {{ auth.user?.name }}
+          {{ auth.user?.display_name }}
           <FontAwesomeIcon v-if="auth.user?.identity_verified" :icon="icons.verified" class="text-primary-500 text-sm" />
         </h1>
+
+        <RouterLink
+          v-if="auth.user?.username"
+          :to="{ name: 'onboarding-username' }"
+          class="text-sm text-ink-faint hover:text-primary-600 transition-colors"
+        >
+          @{{ auth.user.username }}
+        </RouterLink>
+
         <p class="text-sm text-ink-muted">{{ auth.user?.phone }}</p>
 
         <div class="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border">

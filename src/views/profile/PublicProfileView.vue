@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import ReportBlockMenu from '@/components/profile/ReportBlockMenu.vue'
@@ -18,16 +18,25 @@ const reviews = ref<Review[]>([])
 const loading = ref(true)
 const hasError = ref(false)
 
+/**
+ * One screen, two URLs: `/u/{username}` is canonical, `/users/{id}` is the
+ * legacy route that internal links still produce. Both render the same
+ * profile, so the only difference is how the first request is addressed —
+ * after that everything keys off the id the server returned.
+ */
 async function load() {
   loading.value = true
   hasError.value = false
   try {
-    const userId = Number(route.params.id)
-    const [userRes, reviewsRes] = await Promise.all([
-      profileApi.show(userId),
-      profileApi.reviews(userId) as Promise<{ data: { data: Review[] } }>,
-    ])
+    const username = route.params.username as string | undefined
+
+    const userRes = username
+      ? await profileApi.showByUsername(username)
+      : await profileApi.show(Number(route.params.id))
+
     user.value = userRes.data.data
+
+    const reviewsRes = (await profileApi.reviews(user.value.id)) as { data: { data: Review[] } }
     reviews.value = reviewsRes.data.data
   } catch {
     hasError.value = true
@@ -35,6 +44,8 @@ async function load() {
     loading.value = false
   }
 }
+
+watch(() => [route.params.id, route.params.username], load)
 
 onMounted(load)
 </script>
@@ -59,12 +70,13 @@ onMounted(load)
 
         <div class="w-20 h-20 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-2xl font-semibold overflow-hidden mx-auto">
           <img v-if="user.profile.avatar_url" :src="user.profile.avatar_url" class="w-full h-full object-cover" />
-          <span v-else>{{ user.name[0] }}</span>
+          <span v-else>{{ user.display_name[0] }}</span>
         </div>
         <h1 class="text-lg font-bold text-ink mt-3 flex items-center justify-center gap-1.5">
-          {{ user.name }}
+          {{ user.display_name }}
           <VerificationBadge v-if="user.identity_verified" compact />
         </h1>
+        <p v-if="user.username" class="text-sm text-ink-faint">@{{ user.username }}</p>
         <p v-if="user.profile.location_name" class="text-sm text-ink-muted flex items-center justify-center gap-1.5">
           <FontAwesomeIcon :icon="icons.location" class="text-ink-faint text-xs" /> {{ user.profile.location_name }}
         </p>

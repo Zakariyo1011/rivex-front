@@ -8,6 +8,14 @@ export interface Profile {
 
 export interface User {
   id: number
+  /**
+   * The handle, without the `@`. Null until the account picks one — every
+   * user who predates handles still has none, so anything rendering it must
+   * cope with the absence rather than assume it.
+   */
+  username: string | null
+  /** What to render. The server already falls back to `name`. */
+  display_name: string
   name: string
   /**
    * Only ever present for the signed-in user themselves (and for admins in the
@@ -297,6 +305,12 @@ export interface IdentityVerification {
 export interface OnboardingState {
   phone_verified: boolean
   location_selected: boolean
+  /**
+   * A handle is required to take part socially — to be findable, followed or
+   * linked to. Enforced by the router guard rather than by the API, so that
+   * accounts created before handles existed keep working while they are asked.
+   */
+  username_set: boolean
   identity_status: KycStatus
   completed: boolean
 }

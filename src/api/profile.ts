@@ -10,9 +10,28 @@ export interface UpdateProfilePayload {
   avatar?: File
 }
 
+export interface UsernameAvailability {
+  available: boolean
+  reason: string | null
+}
+
 export const profileApi = {
+  /** Legacy id route. Still the one used by internal links that hold an id. */
   show(userId: number) {
     return client.get<{ data: User }>(`/users/${userId}`)
+  },
+  /** Canonical public profile. Same payload, addressed by handle. */
+  showByUsername(username: string) {
+    return client.get<{ data: User }>(`/u/${encodeURIComponent(username)}`)
+  },
+  checkUsername(username: string) {
+    return client.get<UsernameAvailability>('/username/available', { params: { username } })
+  },
+  usernameSuggestions() {
+    return client.get<{ data: string[] }>('/username/suggestions')
+  },
+  updateUsername(username: string) {
+    return client.put<{ data: User }>('/me/username', { username })
   },
   update(payload: UpdateProfilePayload) {
     const formData = new FormData()

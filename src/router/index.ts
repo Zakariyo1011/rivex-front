@@ -36,6 +36,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/auth/username',
+      name: 'onboarding-username',
+      component: () => import('@/views/auth/OnboardingUsernameView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/verification',
       name: 'verification-intro',
       component: () => import('@/views/verification/VerificationIntroView.vue'),
@@ -114,8 +120,16 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // Legacy, and kept: internal links that already hold an id use this.
       path: '/users/:id',
       name: 'user-profile',
+      component: () => import('@/views/profile/PublicProfileView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // Canonical public profile — the URL a person is given and shares.
+      path: '/u/:username',
+      name: 'user-profile-by-username',
       component: () => import('@/views/profile/PublicProfileView.vue'),
       meta: { requiresAuth: true },
     },
@@ -235,7 +249,7 @@ const router = createRouter({
  * Screens a half-onboarded user must still be able to reach, otherwise the
  * guard would bounce them away from the very page that unblocks them.
  */
-const ONBOARDING_ROUTES = new Set(['verify-phone', 'onboarding-location'])
+const ONBOARDING_ROUTES = new Set(['verify-phone', 'onboarding-location', 'onboarding-username'])
 
 router.beforeEach(async (to) => {
   if (to.meta.requiresAdminAuth || to.meta.adminGuest) {
@@ -296,6 +310,16 @@ router.beforeEach(async (to) => {
 
   if (!onboarding.location_selected) {
     return { name: 'onboarding-location' }
+  }
+
+  // A handle comes last of the required steps, and only after the user has
+  // seen enough of the product to care what they are called. It is enforced
+  // here rather than by the API on purpose: every account created before
+  // handles existed still has none, and rejecting their requests would lock
+  // them out of an app they already use. The guard asks; the server does not
+  // refuse.
+  if (!onboarding.username_set) {
+    return { name: 'onboarding-username' }
   }
 })
 
