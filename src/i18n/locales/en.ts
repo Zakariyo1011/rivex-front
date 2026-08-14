@@ -1,6 +1,7 @@
 export default {
   nav: {
     home: 'Home',
+    search: 'Search',
     explore: 'Explore',
     applications: 'Applications',
     chats: 'Chats',

@@ -42,6 +42,13 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // Offered after the required steps, never enforced by the guard.
+      path: '/auth/interests',
+      name: 'onboarding-interests',
+      component: () => import('@/views/auth/OnboardingInterestsView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/verification',
       name: 'verification-intro',
       component: () => import('@/views/verification/VerificationIntroView.vue'),
@@ -120,10 +127,32 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/profile/edit',
+      name: 'profile-edit',
+      component: () => import('@/views/profile/ProfileEditView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       // Legacy, and kept: internal links that already hold an id use this.
       path: '/users/:id',
       name: 'user-profile',
       component: () => import('@/views/profile/PublicProfileView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // Global search: people, activities and the category tree. Distinct from
+      // `explore`, which browses activities with filters.
+      path: '/search',
+      name: 'search',
+      component: () => import('@/views/search/SearchView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // Followers, following, and — for the owner only — pending requests.
+      // The tab is in the path so a link can point at a specific list.
+      path: '/users/:id/connections/:tab?',
+      name: 'follow-list',
+      component: () => import('@/views/profile/FollowListView.vue'),
       meta: { requiresAuth: true },
     },
     {
@@ -137,6 +166,12 @@ const router = createRouter({
       path: '/notifications',
       name: 'notifications',
       component: () => import('@/views/notifications/NotificationsView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/settings/privacy',
+      name: 'privacy-settings',
+      component: () => import('@/views/settings/PrivacyView.vue'),
       meta: { requiresAuth: true },
     },
     {
@@ -249,7 +284,7 @@ const router = createRouter({
  * Screens a half-onboarded user must still be able to reach, otherwise the
  * guard would bounce them away from the very page that unblocks them.
  */
-const ONBOARDING_ROUTES = new Set(['verify-phone', 'onboarding-location', 'onboarding-username'])
+const ONBOARDING_ROUTES = new Set(['verify-phone', 'onboarding-location', 'onboarding-username', 'onboarding-interests'])
 
 router.beforeEach(async (to) => {
   if (to.meta.requiresAdminAuth || to.meta.adminGuest) {

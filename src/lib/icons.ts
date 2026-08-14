@@ -70,6 +70,11 @@ import {
   faPalette,
   faClipboardList,
   faRightFromBracket,
+  faGraduationCap,
+  faLaptopCode,
+  faBriefcase,
+  faHandHoldingHeart,
+  faChess,
 } from '@fortawesome/free-solid-svg-icons'
 import { faStar as faStarRegular, faBookmark as faBookmarkRegular, faHeart as faHeartRegular } from '@fortawesome/free-regular-svg-icons'
 
@@ -156,7 +161,15 @@ const categoryIcons: Record<string, IconDefinition> = {
   coffee: faMugSaucer,
   travel: faPlaneDeparture,
   study: faBook,
-  hobbies: faPalette,
+
+  // The roots added in 11.5. Without these the six new shelves all render the
+  // same generic glyph, which reads as "unknown" rather than as a category.
+  education: faGraduationCap,
+  technology: faLaptopCode,
+  creative: faPalette,
+  business: faBriefcase,
+  hobbies: faChess,
+  community: faHandHoldingHeart,
 }
 
 /** Category icon by slug, falling back to a generic "more" glyph for unmapped/future categories. */

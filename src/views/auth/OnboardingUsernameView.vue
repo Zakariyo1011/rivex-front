@@ -5,6 +5,7 @@ import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { profileApi } from '@/api/profile'
 import { useAuthStore } from '@/stores/auth'
+import { useUsernameCheck } from '@/composables/useUsernameCheck'
 import { extractErrorMessage } from '@/composables/useApiError'
 import { icons } from '@/lib/icons'
 
@@ -17,72 +18,20 @@ const saving = ref(false)
 const error = ref('')
 
 /**
- * Availability state for the handle currently typed.
+ * The shape rule and the debounced check now live in `useUsernameCheck`,
+ * shared with the profile editor. They were duplicated here first; keeping two
+ * copies of a mirror of a server rule is how a screen ends up accepting a
+ * handle the API refuses.
  *
- * `idle` also covers "too short to bother asking", which is why the check is
- * not simply a boolean: an empty field is not unavailable, it is unanswered.
+ * No `current` is passed: this screen exists precisely because there is no
+ * handle yet.
  */
-const status = ref<'idle' | 'checking' | 'available' | 'taken'>('idle')
-const reason = ref<string | null>(null)
+const { normalised, status, reason, reject } = useUsernameCheck(username)
 
-/** Mirrors the server rule so the obvious mistakes never cost a round trip. */
-const FORMAT = /^[a-z0-9](?:[a-z0-9_]{1,28})[a-z0-9]$/
-
-const normalised = computed(() => username.value.trim().toLowerCase())
 const canSubmit = computed(() => status.value === 'available' && !saving.value)
 
-let checkToken = 0
-let debounce: ReturnType<typeof setTimeout> | undefined
-
-function localComplaint(value: string): string | null {
-  if (value.length < 3) return "Kamida 3 ta belgi bo'lishi kerak."
-  if (value.length > 30) return '30 ta belgidan oshmasligi kerak.'
-  if (!FORMAT.test(value)) return 'Faqat lotin harflari, raqamlar va pastki chiziq.'
-  if (value.includes('__')) return "Ketma-ket ikkita pastki chiziq bo'lmasligi kerak."
-  if (/^\d+$/.test(value)) return "Faqat raqamlardan iborat bo'la olmaydi."
-  return null
-}
-
-/**
- * Every keystroke would otherwise be a request, and the endpoint is rate
- * limited precisely because it answers an existence question. The token guards
- * against an earlier, slower response overwriting a later one.
- */
-watch(normalised, (value) => {
-  clearTimeout(debounce)
+watch(normalised, () => {
   error.value = ''
-
-  if (!value) {
-    status.value = 'idle'
-    reason.value = null
-    return
-  }
-
-  const complaint = localComplaint(value)
-  if (complaint) {
-    status.value = 'taken'
-    reason.value = complaint
-    return
-  }
-
-  status.value = 'checking'
-  const token = ++checkToken
-
-  debounce = setTimeout(async () => {
-    try {
-      const { data } = await profileApi.checkUsername(value)
-      if (token !== checkToken) return
-
-      status.value = data.available ? 'available' : 'taken'
-      reason.value = data.reason
-    } catch {
-      if (token !== checkToken) return
-      // A failed check is not a taken handle. Let them try to submit; the
-      // server decides for real.
-      status.value = 'idle'
-      reason.value = null
-    }
-  }, 350)
 })
 
 async function submit() {
@@ -94,12 +43,14 @@ async function submit() {
   try {
     await profileApi.updateUsername(normalised.value)
     await auth.fetchMe()
-    router.push({ name: 'home' })
+    // Interests are optional, but this is the one moment the user is
+    // already in a setup frame of mind. The screen itself offers a skip.
+    router.push({ name: 'onboarding-interests' })
   } catch (e) {
     error.value = extractErrorMessage(e)
     // The server is the authority, so a rejection here overrides whatever the
     // advisory check said a moment ago.
-    status.value = 'taken'
+    reject(error.value)
   } finally {
     saving.value = false
   }

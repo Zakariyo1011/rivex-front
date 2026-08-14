@@ -38,6 +38,22 @@ const incomingApplicationsLink = (notification: AppNotification): RouteLocationR
 const noShowLink = (): RouteLocationRaw => ({ name: 'no-show-reports' })
 const walletLink = (): RouteLocationRaw => ({ name: 'wallet' })
 
+/**
+ * Straight to the person, by handle when there is one.
+ *
+ * Follow notifications carry both, because an account may not have claimed a
+ * username yet and the legacy id route still resolves.
+ */
+const followerLink = (notification: AppNotification): RouteLocationRaw | null => {
+  const username = notification.data.username
+  if (username) {
+    return { name: 'user-profile-by-username', params: { username: String(username) } }
+  }
+
+  const id = notification.data.user_id
+  return id ? { name: 'user-profile', params: { id: String(id) } } : null
+}
+
 const PRESENTATION: Record<string, NotificationPresentation> = {
   // Applications
   new_application: { icon: icons.applications, tone: 'primary', to: incomingApplicationsLink },
@@ -52,6 +68,13 @@ const PRESENTATION: Record<string, NotificationPresentation> = {
   // No-show and disputes always resolve to the screen where the user can act.
   no_show_reported: { icon: icons.warning, tone: 'danger', to: noShowLink },
   dispute_resolved: { icon: icons.trust, tone: 'primary', to: noShowLink },
+
+  // Social. A follow request goes to the request inbox rather than the
+  // requester's profile — the notification exists because it needs an answer,
+  // and the answer lives there.
+  new_follower: { icon: icons.people, tone: 'primary', to: followerLink },
+  follow_request: { icon: icons.people, tone: 'primary', to: followerLink },
+  follow_accepted: { icon: icons.check, tone: 'success', to: followerLink },
 
   // Money
   payment_successful: { icon: icons.amount, tone: 'success', to: walletLink },

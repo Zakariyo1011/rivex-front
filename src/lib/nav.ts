@@ -9,7 +9,8 @@ export interface NavItem {
 
 export const mainNavItems: NavItem[] = [
   { name: 'home', icon: icons.home, labelKey: 'nav.home' },
-  { name: 'explore', icon: icons.explore, labelKey: 'nav.explore' },
+  { name: 'search', icon: icons.explore, labelKey: 'nav.search' },
+  { name: 'explore', icon: icons.date, labelKey: 'nav.explore' },
   { name: 'applications', icon: icons.applications, labelKey: 'nav.applications' },
   { name: 'chats', icon: icons.chat, labelKey: 'nav.chats' },
   { name: 'profile', icon: icons.profile, labelKey: 'nav.profile' },

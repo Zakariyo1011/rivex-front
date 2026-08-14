@@ -3,7 +3,6 @@ export interface Profile {
   bio: string | null
   age: number | null
   location_name: string | null
-  visibility?: 'public' | 'private'
 }
 
 export interface User {
@@ -29,6 +28,12 @@ export interface User {
   verification_status: KycStatus
   status: string
   profile: Profile
+  /**
+   * Present and true when the viewer may not read this profile's contents.
+   * Distinguishes a closed profile from an empty one — without it, a private
+   * account renders as somebody who simply never filled anything in.
+   */
+  is_restricted?: boolean
   rating_average?: number | null
   reviews_count?: number
   no_show_count?: number
@@ -37,11 +42,29 @@ export interface User {
   created_at: string
 }
 
+/**
+ * An activity category — a node in a two-level tree since 11.5.
+ *
+ * `GET /categories` returns roots only, exactly as it always has, so anything
+ * reading that endpoint sees no change. `children` arrives only from
+ * `GET /categories/tree`, which is why it is optional rather than an empty
+ * array: absent means "not asked for", not "has none".
+ */
 export interface Category {
   id: number
   name: string
   slug: string
   icon: string | null
+  /** Null on a root. Lets a client tell a shelf from a leaf. */
+  parent_id?: number | null
+  children?: Category[]
+
+  /**
+   * Search-only, and optional for the same reason `children` is: the flat and
+   * tree endpoints do not load them, and absent is not the same as zero.
+   */
+  parent?: Category | null
+  activities_count?: number
 }
 
 export interface Region {
@@ -156,6 +179,7 @@ export type NotificationCategoryKey =
   | 'activity'
   | 'applications'
   | 'chat'
+  | 'social'
   | 'payments'
   | 'reminders'
   | 'security'
@@ -302,6 +326,37 @@ export interface IdentityVerification {
 }
 
 /** Returned alongside `data` by GET /me so the router can route onboarding. */
+/** Owner-only completion meter, served beside `data` by GET /me. */
+export interface ProfileCompletion {
+  percent: number
+  missing: { key: string; label: string }[]
+}
+
+/**
+ * The handle change policy, owner-only, served beside `data` by GET /me.
+ *
+ * This is what lets the edit screen apply the same rule the write applies.
+ * `GET /username/available` answers about the handle — reserved, taken,
+ * quarantined — and says nothing about whether *this* account may change right
+ * now, so without this block a screen can show a free handle as available and
+ * still have the save refused.
+ *
+ * Absent from every other user's payload on purpose: `changed_at` on a
+ * stranger's profile announces a recent rename, which is the signal the
+ * cooldown exists to suppress.
+ */
+export interface UsernamePolicy {
+  username: string | null
+  changed_at: string | null
+  can_change_now: boolean
+  next_change_allowed_at: string | null
+  /** The one free correction after onboarding; unspent while true. */
+  free_change_available: boolean
+  cooldown_days: number
+  min: number
+  max: number
+}
+
 export interface OnboardingState {
   phone_verified: boolean
   location_selected: boolean
@@ -393,6 +448,43 @@ export interface DashboardStats {
   pending_withdrawals: number
   pending_reports: number
   pending_verifications: number
+}
+
+export type FollowStatus = 'accepted' | 'pending'
+
+/**
+ * The viewer's tie to one account.
+ *
+ * Served **beside** the profile payload, never inside `data`: the user resource
+ * is what goes out over WebSocket and is embedded in other people's payloads,
+ * so a viewer-relative field there would attach one viewer's answer to a
+ * message delivered to everybody.
+ *
+ * Both directions are reported because they are independent — following is not
+ * symmetric, and "follows you" is what the button uses to offer "follow back".
+ */
+export interface FollowRelationship {
+  /** Viewer → subject. */
+  is_following: boolean
+  follow_status: FollowStatus | null
+  /** Subject → viewer. */
+  is_followed_by: boolean
+  can_follow: boolean
+  /** Whether pressing follow will create a request rather than a follow. */
+  follow_needs_approval: boolean
+}
+
+/**
+ * Follower and following totals.
+ *
+ * Null when `who_can_see_followers` withholds them — a count is an aggregate of
+ * the hidden list, so publishing it would leak membership one increment at a
+ * time. `pending_requests` is present only on the owner's own `/me`.
+ */
+export interface FollowCounts {
+  followers: number
+  following: number
+  pending_requests?: number
 }
 
 export interface PaginatedResponse<T> {

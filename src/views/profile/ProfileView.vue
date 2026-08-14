@@ -137,15 +137,71 @@ onMounted(async () => {
           <FontAwesomeIcon v-if="auth.user?.identity_verified" :icon="icons.verified" class="text-primary-500 text-sm" />
         </h1>
 
+        <!-- Editing a handle you already hold is not onboarding. That route
+             renders the auth layout with no navigation, starts from an empty
+             field, and on success pushes into the interests step — so an
+             established user who only wanted to fix a typo ended up being
+             walked through sign-up again. -->
         <RouterLink
           v-if="auth.user?.username"
-          :to="{ name: 'onboarding-username' }"
+          to="/profile/edit"
           class="text-sm text-ink-faint hover:text-primary-600 transition-colors"
         >
           @{{ auth.user.username }}
         </RouterLink>
 
         <p class="text-sm text-ink-muted">{{ auth.user?.phone }}</p>
+
+        <!-- Your own counts are always yours to see; `who_can_see_followers`
+             governs who else may, never the account holder. The request badge
+             is a to-do, so it only appears when there is something to do. -->
+        <div
+          v-if="auth.followCounts && auth.user"
+          class="flex items-center justify-center gap-5 mt-3 text-sm"
+        >
+          <RouterLink
+            :to="{ name: 'follow-list', params: { id: String(auth.user.id), tab: 'followers' } }"
+            class="hover:text-primary-600 transition-colors"
+          >
+            <span class="font-bold text-ink">{{ auth.followCounts.followers }}</span>
+            <span class="text-ink-muted ml-1">kuzatuvchi</span>
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'follow-list', params: { id: String(auth.user.id), tab: 'following' } }"
+            class="hover:text-primary-600 transition-colors"
+          >
+            <span class="font-bold text-ink">{{ auth.followCounts.following }}</span>
+            <span class="text-ink-muted ml-1">kuzatilmoqda</span>
+          </RouterLink>
+        </div>
+
+        <RouterLink
+          v-if="auth.followCounts?.pending_requests && auth.user"
+          :to="{ name: 'follow-list', params: { id: String(auth.user.id), tab: 'requests' } }"
+          class="inline-flex items-center gap-1.5 mt-3 px-3 h-8 rounded-full bg-primary-50 text-primary-700 text-xs font-medium"
+        >
+          <FontAwesomeIcon :icon="icons.people" />
+          {{ auth.followCounts.pending_requests }} ta kuzatuv so'rovi
+        </RouterLink>
+
+        <!-- Completion, owner-only. Doubles as the way into the section editor. -->
+        <RouterLink
+          v-if="auth.completion && auth.completion.percent < 100"
+          to="/profile/edit"
+          class="block mt-4 pt-4 border-t border-border text-left"
+        >
+          <div class="flex items-center justify-between mb-1.5">
+            <span class="text-xs font-medium text-ink-secondary">Profil to'liqligi</span>
+            <span class="text-xs font-bold text-primary-600">{{ auth.completion.percent }}%</span>
+          </div>
+          <div class="h-1.5 rounded-full bg-surface-muted overflow-hidden">
+            <div
+              class="h-full rounded-full bg-primary-500 transition-all duration-500"
+              :style="{ width: `${auth.completion.percent}%` }"
+            />
+          </div>
+          <p class="text-xs text-ink-faint mt-1.5">Bo'lim qo'shish uchun bosing</p>
+        </RouterLink>
 
         <div class="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border">
           <div>

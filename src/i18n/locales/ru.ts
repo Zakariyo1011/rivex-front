@@ -1,7 +1,8 @@
 export default {
   nav: {
     home: 'Главная',
-    explore: 'Поиск',
+    search: 'Поиск',
+    explore: 'Активности',
     applications: 'Заявки',
     chats: 'Чаты',
     profile: 'Профиль',

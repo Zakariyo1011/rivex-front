@@ -138,8 +138,42 @@ async function enableLocation() {
   loadActivities()
 }
 
+/**
+ * The root whose children are on show.
+ *
+ * Tracked separately from `categoryId` because selecting a child must not
+ * collapse the row it was selected from — the drill-down stays open on the
+ * parent while the filter moves to the child.
+ */
+const openRootId = ref<number | null>(null)
+
+const openRoot = computed(() => categories.value.find((c) => c.id === openRootId.value) ?? null)
+
+const subcategories = computed(() => openRoot.value?.children ?? [])
+
 function toggleCategory(id: number) {
-  categoryId.value = categoryId.value === id ? null : id
+  const wasActive = categoryId.value === id || openRootId.value === id
+
+  if (wasActive) {
+    categoryId.value = null
+    openRootId.value = null
+  } else {
+    categoryId.value = id
+    openRootId.value = id
+  }
+
+  loadActivities()
+}
+
+/**
+ * Narrow to a child, or step back up to the whole shelf.
+ *
+ * Tapping the active child returns the filter to its root rather than clearing
+ * it — the row is already open on that root, so clearing entirely would leave
+ * the interface showing a drill-down for a filter that no longer exists.
+ */
+function toggleSubcategory(id: number) {
+  categoryId.value = categoryId.value === id ? openRootId.value : id
   loadActivities()
 }
 
@@ -155,6 +189,7 @@ function applyFilters(next: ExploreFilters) {
 function clearAll() {
   search.value = ''
   categoryId.value = null
+  openRootId.value = null
   scope.value = 'all'
   Object.assign(filters, {
     date: null,
@@ -178,12 +213,24 @@ watch(search, () => {
 
 onMounted(async () => {
   const [categoriesRes, regionsRes] = await Promise.all([
-    categoriesApi.list().catch(() => null),
+    // The tree, not the flat list: the chips render roots and the drill-down
+    // needs their children without a second round trip on every tap.
+    categoriesApi.tree().catch(() => null),
     locationsApi.regions().catch(() => null),
   ])
 
   if (categoriesRes) categories.value = categoriesRes.data.data
   if (regionsRes) regions.value = regionsRes.data.data
+
+  // A link may arrive pointing at a subcategory (`?category_id=`). Open the
+  // shelf it belongs to, so the drill-down reflects the filter that is already
+  // applied instead of showing a closed row.
+  if (categoryId.value !== null) {
+    const root = categories.value.find(
+      (c) => c.id === categoryId.value || c.children?.some((k) => k.id === categoryId.value),
+    )
+    openRootId.value = root?.id ?? null
+  }
 
   // Saved onboarding location powers the "my district / my region" chips.
   try {
@@ -235,16 +282,53 @@ onMounted(async () => {
         @update:radius-km="((radiusKm = $event), loadActivities())"
       />
 
-      <div class="flex gap-2 overflow-x-auto pb-2 mb-5 -mx-4 px-4 md:mx-0 md:px-0">
+      <div class="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0">
         <CategoryChip
           v-for="category in categories"
           :key="category.id"
           :slug="category.slug"
           :label="category.name"
-          :active="categoryId === category.id"
+          :active="openRootId === category.id"
           @click="toggleCategory(category.id)"
         />
       </div>
+
+      <!-- Subcategories, shown only once a shelf is open. A second row that is
+           always present would be noise; one that appears on demand is a
+           drill-down. Roots with no children (Coffee) simply never open one. -->
+      <div
+        v-if="subcategories.length"
+        class="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0"
+      >
+        <button
+          type="button"
+          class="shrink-0 h-8 px-3 rounded-full text-xs font-medium transition"
+          :class="
+            categoryId === openRootId
+              ? 'bg-primary-100 text-primary-700'
+              : 'bg-surface-muted text-ink-muted hover:bg-border'
+          "
+          @click="toggleSubcategory(openRootId!)"
+        >
+          Hammasi
+        </button>
+        <button
+          v-for="child in subcategories"
+          :key="child.id"
+          type="button"
+          class="shrink-0 h-8 px-3 rounded-full text-xs font-medium transition"
+          :class="
+            categoryId === child.id
+              ? 'bg-primary-100 text-primary-700'
+              : 'bg-surface-muted text-ink-muted hover:bg-border'
+          "
+          @click="toggleSubcategory(child.id)"
+        >
+          {{ child.name }}
+        </button>
+      </div>
+
+      <div class="mb-5" />
 
       <!-- GPS refused: say so once, offer the retry, and keep results flowing
            from the region filter rather than showing a dead end. -->

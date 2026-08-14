@@ -3,11 +3,13 @@ import type { User } from '@/types'
 
 export interface UpdateProfilePayload {
   name?: string
+  display_name?: string
   bio?: string
   age?: number
   location_name?: string
-  visibility?: 'public' | 'private'
   avatar?: File
+  // Visibility moved to PUT /me/privacy, where it sits with the controls it
+  // has to agree with. See @/api/privacy.
 }
 
 export interface UsernameAvailability {

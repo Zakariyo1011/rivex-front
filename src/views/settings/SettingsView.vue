@@ -45,6 +45,7 @@ function setLanguage(value: string) {
 }
 
 const links = computed(() => [
+  { to: '/settings/privacy', icon: icons.trust, label: t('settings.privacy') },
   { to: '/settings/notifications', icon: icons.notifications, label: t('notifications.settings') },
   { to: '/no-show-reports', icon: icons.warning, label: 'Menga qarshi shikoyatlar' },
   { to: '/blocked-users', icon: icons.block, label: t('settings.blockedUsers') },

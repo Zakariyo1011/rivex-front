@@ -8,7 +8,10 @@ const { t } = useI18n()
 
 const items = [
   { name: 'home', labelKey: 'nav.home', icon: icons.home },
-  { name: 'explore', labelKey: 'nav.explore', icon: icons.explore },
+  // Global search is the discovery entry on mobile; Explore stays reachable
+  // from the desktop sidebar and from Home. Six items plus the create button
+  // does not fit at 375px, and search is the broader of the two.
+  { name: 'search', labelKey: 'nav.search', icon: icons.explore },
   { name: 'activity-create', labelKey: '', icon: icons.add },
   { name: 'chats', labelKey: 'nav.chats', icon: icons.chat },
   { name: 'profile', labelKey: 'nav.profile', icon: icons.profile },

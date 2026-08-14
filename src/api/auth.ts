@@ -1,5 +1,11 @@
 import client from './client'
-import type { OnboardingState, User } from '@/types'
+import type {
+  FollowCounts,
+  OnboardingState,
+  ProfileCompletion,
+  User,
+  UsernamePolicy,
+} from '@/types'
 
 interface AuthResponse {
   user: User
@@ -25,7 +31,13 @@ export const authApi = {
   /** `onboarding` sits beside `data` — it is private to the caller and is
    *  deliberately absent from the shared public-profile resource. */
   me() {
-    return client.get<{ data: User; onboarding: OnboardingState }>('/me')
+    return client.get<{
+      data: User
+      onboarding: OnboardingState
+      completion: ProfileCompletion
+      username_policy: UsernamePolicy
+      follow_counts: FollowCounts
+    }>('/me')
   },
   deleteAccount(password: string) {
     return client.delete<{ message: string }>('/me', { data: { password } })

@@ -1,7 +1,8 @@
 export default {
   nav: {
     home: 'Bosh sahifa',
-    explore: 'Qidiruv',
+    search: 'Qidiruv',
+    explore: 'Faoliyatlar',
     applications: 'Arizalar',
     chats: 'Suhbatlar',
     profile: 'Profil',

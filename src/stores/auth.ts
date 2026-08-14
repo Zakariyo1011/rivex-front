@@ -3,13 +3,33 @@ import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import { disconnectEcho } from '@/composables/useEcho'
-import type { OnboardingState, User } from '@/types'
+import type {
+  FollowCounts,
+  OnboardingState,
+  ProfileCompletion,
+  User,
+  UsernamePolicy,
+} from '@/types'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   const token = ref<string | null>(localStorage.getItem('rivex_token'))
   const pendingPhone = ref<string | null>(null)
   const onboarding = ref<OnboardingState | null>(null)
+  /** Owner-only, served beside /me. Never present for anyone else's profile. */
+  const completion = ref<ProfileCompletion | null>(null)
+  /**
+   * Owner-only handle change policy, also from /me. The edit screen gates on
+   * this so the cooldown is applied before the write rather than discovered by
+   * it — see UsernamePolicy.
+   */
+  const usernamePolicy = ref<UsernamePolicy | null>(null)
+  /**
+   * The owner's own follower/following totals, plus how many requests are
+   * waiting. Always present for the owner — `who_can_see_followers` governs who
+   * *else* may see the numbers, never the account holder.
+   */
+  const followCounts = ref<FollowCounts | null>(null)
   let inFlight: Promise<unknown> | null = null
 
   const isAuthenticated = computed(() => !!token.value)
@@ -25,6 +45,9 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     token.value = null
     onboarding.value = null
+    completion.value = null
+    usernamePolicy.value = null
+    followCounts.value = null
     inFlight = null
     localStorage.removeItem('rivex_token')
     useNotificationsStore().reset()
@@ -66,6 +89,9 @@ export const useAuthStore = defineStore('auth', () => {
     const { data } = await authApi.me()
     user.value = data.data
     onboarding.value = data.onboarding ?? null
+    completion.value = data.completion ?? null
+    usernamePolicy.value = data.username_policy ?? null
+    followCounts.value = data.follow_counts ?? null
     return data.data
   }
 
@@ -105,6 +131,9 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     token,
     onboarding,
+    completion,
+    usernamePolicy,
+    followCounts,
     isAuthenticated,
     isIdentityVerified,
     pendingPhone,

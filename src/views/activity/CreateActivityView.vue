@@ -60,11 +60,14 @@ const paymentOptions: { value: PaymentType; label: string; hint: string; icon: I
 onMounted(async () => {
   try {
     const [{ data: categoriesData }, { data: regionsData }] = await Promise.all([
-      categoriesApi.list(),
+      categoriesApi.tree(),
       locationsApi.regions(),
     ])
     categories.value = categoriesData.data
-    if (categories.value[0]) form.category_id = categories.value[0].id
+    if (categories.value[0]) {
+      rootCategoryId.value = categories.value[0].id
+      form.category_id = categories.value[0].id
+    }
     regions.value = regionsData.data
   } catch (e) {
     error.value = extractErrorMessage(e)
@@ -74,6 +77,24 @@ onMounted(async () => {
   form.date = now.toISOString().slice(0, 10)
   form.time = now.toTimeString().slice(0, 5)
 })
+
+/**
+ * The shelf, tracked apart from what actually gets submitted.
+ *
+ * `form.category_id` is the single value the API takes and may hold either a
+ * root or a child — the endpoint accepts any category id and always has. This
+ * ref only drives which subcategory list is on offer.
+ */
+const rootCategoryId = ref<number | null>(null)
+
+const subcategories = computed(
+  () => categories.value.find((c) => c.id === rootCategoryId.value)?.children ?? [],
+)
+
+/** Changing shelf discards the finer choice, which belonged to the old one. */
+function onRootCategoryChange() {
+  form.category_id = rootCategoryId.value
+}
 
 const canContinueStep1 = computed(() => form.title.trim().length > 0 && form.category_id)
 const canContinueStep2 = computed(
@@ -144,10 +165,28 @@ async function publish() {
         <label class="block">
           <span class="block text-sm font-medium text-ink-secondary mb-1.5">Kategoriya</span>
           <select
+            v-model.number="rootCategoryId"
+            class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
+            @change="onRootCategoryChange"
+          >
+            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+          </select>
+        </label>
+
+        <!-- Optional, and only where there is something to choose. Filing an
+             activity precisely helps people find it, but forcing a second
+             decision to publish would not — leaving this alone files it on the
+             shelf, exactly as before this step existed. -->
+        <label v-if="subcategories.length" class="block">
+          <span class="block text-sm font-medium text-ink-secondary mb-1.5">
+            Aniqroq turi <span class="text-ink-faint font-normal">(ixtiyoriy)</span>
+          </span>
+          <select
             v-model.number="form.category_id"
             class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
           >
-            <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
+            <option :value="rootCategoryId">Umumiy</option>
+            <option v-for="c in subcategories" :key="c.id" :value="c.id">{{ c.name }}</option>
           </select>
         </label>
 
