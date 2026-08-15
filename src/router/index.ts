@@ -115,7 +115,7 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/chats/:matchId',
+      path: '/chats/:conversationId',
       name: 'chat-detail',
       component: () => import('@/views/chat/ChatDetailView.vue'),
       meta: { requiresAuth: true },
@@ -278,6 +278,24 @@ const router = createRouter({
       meta: { requiresAdminAuth: true, permission: 'audit-logs.view' },
     },
   ],
+
+  /**
+   * Start every screen at the top — unless it was linked to by `#fragment`.
+   *
+   * A screen worth linking into renders its anchor only once its data has
+   * arrived, which is long after this callback runs; scrolling here would find
+   * nothing and silently do nothing. So the screens that own an anchor scroll
+   * to it themselves, when they know they are ready (see `useHashScroll`), and
+   * this returns `false` to stay out of their way.
+   *
+   * `false` rather than `{ top: 0 }` is the whole point: the router applies its
+   * scroll *after* the component has mounted, so returning a position here
+   * would undo the component's own scroll a frame later and leave the user at
+   * the top of the page wondering where the link went.
+   */
+  scrollBehavior(to) {
+    return to.hash ? false : { top: 0 }
+  },
 })
 
 /**

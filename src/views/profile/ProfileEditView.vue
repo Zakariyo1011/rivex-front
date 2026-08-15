@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue'
+import AppButton from '@/components/ui/AppButton.vue'
 import AppCard from '@/components/ui/AppCard.vue'
+import AppInput from '@/components/ui/AppInput.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ProfileSections from '@/components/profile/ProfileSections.vue'
@@ -9,6 +11,12 @@ import SectionEditor from '@/components/profile/SectionEditor.vue'
 import UsernameEditor from '@/components/profile/UsernameEditor.vue'
 import { useProfileSectionsStore } from '@/stores/profileSections'
 import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+import { useHashScroll } from '@/composables/useHashScroll'
+import { extractErrorMessage } from '@/composables/useApiError'
+import { profileApi } from '@/api/profile'
+import { locationsApi } from '@/api/locations'
+import type { District, Region } from '@/types'
 import { ADDABLE_KINDS, sectionPresentation } from '@/lib/profileSections'
 import { icons } from '@/lib/icons'
 import type { ProfileSection, SectionItem, SectionKind, SocialLink, TagItem, TagType, UpsertSectionPayload } from '@/api/sections'
@@ -16,6 +24,103 @@ import type { Visibility } from '@/api/privacy'
 
 const store = useProfileSectionsStore()
 const auth = useAuthStore()
+const toast = useToast()
+const { scrollToHash } = useHashScroll()
+
+/**
+ * The basic profile fields.
+ *
+ * These lived as an inline `editing` toggle on the profile *display* page,
+ * while this screen — the one called "edit" — held only the handle and the
+ * section list. The two were swapped; this is the correction. Nothing about the
+ * endpoint changed: it is the same `PUT /me/profile` that was already there.
+ */
+const basics = reactive({
+  name: '',
+  bio: '',
+  age: '' as number | string,
+  location_name: '',
+})
+
+const avatarFile = ref<File | null>(null)
+const avatarPreview = ref<string | null>(null)
+const savingBasics = ref(false)
+const basicsError = ref('')
+
+const regions = ref<Region[]>([])
+const districts = ref<District[]>([])
+const regionId = ref<number | null>(null)
+const districtId = ref<number | null>(null)
+const savingLocation = ref(false)
+const locationError = ref('')
+
+function fillBasics() {
+  basics.name = auth.user?.name ?? ''
+  basics.bio = auth.user?.profile.bio ?? ''
+  basics.age = auth.user?.profile.age ?? ''
+  basics.location_name = auth.user?.profile.location_name ?? ''
+}
+
+function onAvatarChange(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file) return
+
+  avatarFile.value = file
+  avatarPreview.value = URL.createObjectURL(file)
+}
+
+async function saveBasics() {
+  basicsError.value = ''
+  savingBasics.value = true
+
+  try {
+    const { data } = await profileApi.update({
+      name: basics.name,
+      bio: basics.bio,
+      age: basics.age ? Number(basics.age) : undefined,
+      location_name: basics.location_name,
+      avatar: avatarFile.value ?? undefined,
+    })
+
+    auth.user = data.data
+    avatarFile.value = null
+    avatarPreview.value = null
+    toast.success('Saqlandi')
+    await refreshCompletion()
+  } catch (e) {
+    basicsError.value = extractErrorMessage(e)
+  } finally {
+    savingBasics.value = false
+  }
+}
+
+async function loadDistricts(id: number) {
+  const { data } = await locationsApi.districts(id)
+  districts.value = data.data
+}
+
+async function onRegionChange() {
+  districtId.value = null
+  if (regionId.value) await loadDistricts(regionId.value)
+}
+
+async function saveLocation() {
+  locationError.value = ''
+  savingLocation.value = true
+
+  try {
+    await locationsApi.updateMe({
+      region_id: regionId.value,
+      district_id: districtId.value ?? undefined,
+    })
+    toast.success('Joylashuv saqlandi')
+    await refreshCompletion()
+  } catch (e) {
+    locationError.value = extractErrorMessage(e)
+  } finally {
+    savingLocation.value = false
+  }
+}
 
 const editing = ref<{ kind: SectionKind; existing: ProfileSection | null } | null>(null)
 
@@ -97,6 +202,23 @@ onMounted(async () => {
   // The completion meter is served beside /me, so it has to be re-read rather
   // than derived from the sections we just loaded.
   await auth.fetchMe().catch(() => undefined)
+  fillBasics()
+
+  try {
+    const [me, regionList] = await Promise.all([locationsApi.me(), locationsApi.regions()])
+
+    regions.value = regionList.data.data
+    regionId.value = me.data.data.region?.id ?? null
+    districtId.value = me.data.data.district?.id ?? null
+
+    if (regionId.value) await loadDistricts(regionId.value)
+  } catch {
+    regions.value = []
+  }
+
+  // Settings → Account → "Foydalanuvchi nomi" links to #username, and the card
+  // only exists now that the data behind this screen has arrived.
+  void scrollToHash()
 })
 </script>
 
@@ -104,15 +226,117 @@ onMounted(async () => {
   <AppLayout>
     <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-2xl pb-10">
       <div class="flex items-center justify-between gap-3 mb-5">
-        <h1 class="text-xl font-bold text-ink">Profilni to'ldirish</h1>
+        <h1 class="text-xl font-bold text-ink">Profilni tahrirlash</h1>
         <RouterLink to="/profile" class="text-sm text-primary-600 font-medium">Profilim</RouterLink>
       </div>
 
-      <!-- Identity first: the handle is the one field on this screen other
-           people type, cite and link to. It reads from the auth store rather
-           than the sections store, so it stays put through the loading and
-           error states below. -->
+      <!-- Who you are: face, name, and the words underneath them. First
+           because it is what another person sees first. -->
+      <AppCard class="mb-4">
+        <h2 class="font-semibold text-ink mb-4">Asosiy ma'lumotlar</h2>
+
+        <div class="flex items-center gap-4 mb-5">
+          <label class="relative cursor-pointer shrink-0">
+            <div
+              class="w-20 h-20 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-2xl font-semibold overflow-hidden"
+            >
+              <img
+                v-if="avatarPreview || auth.user?.profile.avatar_url"
+                :src="avatarPreview ?? auth.user?.profile.avatar_url!"
+                class="w-full h-full object-cover"
+                alt=""
+              />
+              <span v-else>{{ auth.user?.display_name?.[0] }}</span>
+            </div>
+            <span
+              class="absolute bottom-0 right-0 w-7 h-7 rounded-full bg-primary-600 text-white flex items-center justify-center text-xs border-2 border-surface"
+            >
+              <FontAwesomeIcon :icon="icons.camera" />
+            </span>
+            <input
+              type="file"
+              accept="image/*"
+              class="hidden"
+              aria-label="Rasm tanlash"
+              @change="onAvatarChange"
+            />
+          </label>
+
+          <div class="text-sm text-ink-muted">
+            <p class="font-medium text-ink-secondary">Profil rasmi</p>
+            <p class="text-xs mt-0.5">Rasmni almashtirish uchun bosing.</p>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <AppInput v-model="basics.name" label="Ism" />
+
+          <label class="block">
+            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Bio</span>
+            <textarea
+              v-model="basics.bio"
+              rows="3"
+              placeholder="O'zingiz haqingizda qisqacha"
+              class="w-full rounded-xl border border-border bg-surface p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
+            />
+          </label>
+
+          <AppInput v-model.number="basics.age" label="Yosh" type="number" />
+          <AppInput
+            v-model="basics.location_name"
+            label="Manzil"
+            placeholder="Toshkent, Chilonzor"
+          />
+
+          <p v-if="basicsError" class="text-sm text-danger">{{ basicsError }}</p>
+
+          <AppButton :loading="savingBasics" @click="saveBasics">Saqlash</AppButton>
+        </div>
+      </AppCard>
+
+      <!-- The handle. Its own card, on the edit screen, rather than something
+           you reach by tapping your own name on the profile page. The rules
+           behind it — cooldown, quarantine, availability — are unchanged and
+           still live entirely in UsernameService. -->
       <UsernameEditor />
+
+      <!-- Region and district: structured location, separate from the free-text
+           `location_name` above because search filters on this one. -->
+      <AppCard class="mb-4">
+        <h2 class="font-semibold text-ink mb-4">Joylashuv</h2>
+
+        <div class="space-y-4">
+          <label class="block">
+            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Viloyat</span>
+            <select
+              v-model.number="regionId"
+              class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
+              @change="onRegionChange"
+            >
+              <option :value="null" disabled>Viloyatni tanlang</option>
+              <option v-for="r in regions" :key="r.id" :value="r.id">{{ r.name }}</option>
+            </select>
+          </label>
+
+          <label class="block">
+            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Tuman</span>
+            <select
+              v-model.number="districtId"
+              :disabled="!regionId"
+              class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100 disabled:bg-surface-muted disabled:text-ink-faint"
+            >
+              <option :value="null">Tuman tanlanmagan</option>
+              <option v-for="d in districts" :key="d.id" :value="d.id">{{ d.name }}</option>
+            </select>
+          </label>
+
+          <p v-if="locationError" class="text-sm text-danger">{{ locationError }}</p>
+
+          <AppButton variant="outline" :loading="savingLocation" @click="saveLocation">
+            Joylashuvni saqlash
+          </AppButton>
+        </div>
+      </AppCard>
 
       <!-- Completion -->
       <AppCard v-if="completion" class="mb-4">

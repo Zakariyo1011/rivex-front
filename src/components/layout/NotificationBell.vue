@@ -9,6 +9,18 @@ import { icons } from '@/lib/icons'
 import { timeAgo } from '@/lib/datetime'
 import type { AppNotification } from '@/types'
 
+/**
+ * Where this bell is being rendered.
+ *
+ * `floating` is the round bordered button used in the mobile header bar;
+ * `nav` is a full-width row that matches the desktop sidebar's other entries.
+ * The dropdown has to be anchored differently in each — a right-aligned panel
+ * inside a 72px sidebar opens off the edge of the screen.
+ */
+const props = withDefaults(defineProps<{ variant?: 'floating' | 'nav' }>(), {
+  variant: 'floating',
+})
+
 const router = useRouter()
 const { t } = useI18n()
 const store = useNotificationsStore()
@@ -55,7 +67,26 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
 <template>
   <div ref="root" class="relative">
     <button
-      class="w-10 h-10 rounded-full bg-surface border-2 border-primary-200 shadow-sm flex items-center justify-center relative shrink-0 text-primary-600 hover:border-primary-400 hover:shadow-md transition"
+      v-if="props.variant === 'nav'"
+      class="w-full relative flex items-center gap-3 px-3 h-11 rounded-xl text-[15px] font-medium text-ink-muted hover:bg-surface-muted transition justify-center desktop:justify-start"
+      :aria-label="t('notifications.title')"
+      @click="toggle"
+    >
+      <span class="relative shrink-0">
+        <FontAwesomeIcon :icon="icons.notifications" class="text-base" />
+        <span
+          v-if="store.unreadCount > 0"
+          class="absolute -top-1.5 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-danger text-white text-[10px] font-bold flex items-center justify-center"
+        >
+          {{ store.unreadCount > 9 ? '9+' : store.unreadCount }}
+        </span>
+      </span>
+      <span class="hidden desktop:inline">{{ t('notifications.title') }}</span>
+    </button>
+
+    <button
+      v-else
+      class="w-10 h-10 rounded-full bg-surface border border-border shadow-sm flex items-center justify-center relative shrink-0 text-ink-secondary hover:border-primary-300 hover:text-primary-600 transition"
       :aria-label="t('notifications.title')"
       @click="toggle"
     >
@@ -71,7 +102,8 @@ onUnmounted(() => document.removeEventListener('click', onClickOutside))
     <Transition name="dropdown">
       <div
         v-if="open"
-        class="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto bg-surface rounded-2xl shadow-lg border border-border z-50"
+        class="absolute mt-2 w-80 max-h-96 overflow-y-auto bg-surface rounded-2xl shadow-lg border border-border z-50"
+        :class="props.variant === 'nav' ? 'left-0' : 'right-0'"
       >
         <div class="flex items-center justify-between px-4 py-3 border-b border-border">
           <span class="font-semibold text-ink">{{ t('notifications.title') }}</span>

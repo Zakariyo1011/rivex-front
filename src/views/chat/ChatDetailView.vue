@@ -1,105 +1,153 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
-import ReportBlockMenu from '@/components/profile/ReportBlockMenu.vue'
-import Avatar from '@/components/ui/Avatar.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import ConnectionBanner from '@/components/layout/ConnectionBanner.vue'
-import { matchesApi } from '@/api/matches'
+import ChatHeader from '@/components/chat/ChatHeader.vue'
+import MessageBubble from '@/components/chat/MessageBubble.vue'
+import MessageComposer from '@/components/chat/MessageComposer.vue'
+import ActivityContext from '@/components/chat/ActivityContext.vue'
+import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
 import { useEchoChannel, type PresenceMember } from '@/composables/useEchoChannel'
 import { onEchoReconnect } from '@/composables/useEcho'
 import { usePresence } from '@/composables/usePresence'
 import { useTypingIndicator } from '@/composables/useTypingIndicator'
-import { icons } from '@/lib/icons'
-import { formatTime } from '@/lib/datetime'
-import type { ActivityMatch, Message } from '@/types'
+import { formatDate } from '@/lib/datetime'
+import type { Message } from '@/types'
 
 const route = useRoute()
-const router = useRouter()
 const auth = useAuthStore()
+const chat = useChatStore()
 
-const matchId = computed(() => Number(route.params.matchId))
-const match = ref<ActivityMatch | null>(null)
-const messages = ref<Message[]>([])
-const body = ref('')
-const loading = ref(true)
-const hasError = ref(false)
+const conversationId = computed(() => Number(route.params.conversationId))
 const scrollArea = ref<HTMLElement | null>(null)
 
 const presence = usePresence()
 
-const otherPerson = computed(() => {
-  if (!match.value) return null
-  if (match.value.activity.owner.id !== auth.user?.id) return match.value.activity.owner
+const isGroup = computed(() => chat.active?.type === 'activity')
 
-  return match.value.participants.find((p) => p.id !== auth.user?.id) ?? match.value.activity.owner
-})
-
-const otherIsOnline = computed(() => presence.isOnline(otherPerson.value?.id))
+/** Only meaningful for a direct thread — a group has many "others". */
+const counterpartOnline = computed(() =>
+  chat.active?.type === 'direct' ? presence.isOnline(chat.active.counterpart?.id) : false,
+)
 
 /**
- * The last message I sent that the other side has read.
+ * The newest of my messages the other side has read.
  *
- * Only one tick is shown, on the newest read message, rather than one per
- * bubble — a column of ticks is noise, and what a person actually wants to
- * know is "have they got up to here yet".
+ * One receipt, on the last read message, rather than one per bubble: a column
+ * of ticks is noise, and what a person wants to know is "have they got up to
+ * here yet".
  */
 const lastReadOwnMessageId = computed(() => {
-  const mine = messages.value.filter((m) => m.sender.id === auth.user?.id && m.read_at)
+  const mine = chat.messages.filter((m) => m.sender.id === auth.user?.id && m.read_at)
 
   return mine.at(-1)?.id ?? null
 })
+
+/**
+ * Messages with the presentation decisions already made.
+ *
+ * Computed once here rather than asked per bubble: whether to draw a tail and
+ * whether to start a new day both depend on the *previous* message, which a
+ * bubble cannot see.
+ */
+interface Row {
+  message: Message
+  own: boolean
+  showTail: boolean
+  daySeparator: string | null
+}
+
+const rows = computed<Row[]>(() =>
+  chat.messages.map((message, index) => {
+    const previous = chat.messages[index - 1]
+    const own = message.sender.id === auth.user?.id
+
+    const sameSender = previous?.sender.id === message.sender.id
+    const closeInTime =
+      previous !== undefined &&
+      new Date(message.created_at).getTime() - new Date(previous.created_at).getTime() < 120_000
+
+    const newDay =
+      previous === undefined ||
+      new Date(previous.created_at).toDateString() !== new Date(message.created_at).toDateString()
+
+    return {
+      message,
+      own,
+      // A tail marks the *last* bubble of a run, so the run reads as one block
+      // pointing at its sender.
+      showTail: !sameSender || !closeInTime || newDay,
+      daySeparator: newDay ? dayLabel(message.created_at) : null,
+    }
+  }),
+)
+
+function dayLabel(value: string): string {
+  const date = new Date(value)
+  const now = new Date()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+
+  if (date.toDateString() === now.toDateString()) return 'Bugun'
+  if (date.toDateString() === yesterday.toDateString()) return 'Kecha'
+
+  return formatDate(date)
+}
 
 async function scrollToBottom() {
   await nextTick()
   scrollArea.value?.scrollTo({ top: scrollArea.value.scrollHeight })
 }
 
+/**
+ * Load older messages when the reader reaches the top, keeping their place.
+ *
+ * Prepending content moves everything down by exactly the height that was
+ * added, so the scroll position has to be restored by the same amount or the
+ * view jumps to the message they were already reading past.
+ */
+async function onScroll() {
+  const el = scrollArea.value
+  if (!el || el.scrollTop > 80 || !chat.hasOlder || chat.loadingOlder) return
+
+  const before = el.scrollHeight
+  await chat.loadOlder()
+  await nextTick()
+
+  el.scrollTop = el.scrollHeight - before
+}
+
 // -- realtime ---------------------------------------------------------------
 
 /**
- * Private channel: the durable events. The channel name is a getter, so
- * navigating /chats/1 -> /chats/2 leaves the first channel and joins the
- * second — the leak that used to render one message four times after
- * A -> B -> A -> B navigation.
+ * Messages. The channel name is a getter, so navigating between conversations
+ * leaves one and joins the next — see useEchoChannel for the leak this avoids.
  */
-useEchoChannel(() => (matchId.value ? `match.${matchId.value}` : null), {
+useEchoChannel(() => (conversationId.value ? `conversation.${conversationId.value}` : null), {
   listeners: {
     '.MessageSent': (message: Message) => {
-      if (messages.value.some((m) => m.id === message.id)) return
-
-      messages.value.push(message)
+      chat.receive(message)
       typing.clear(message.sender.id)
       void scrollToBottom()
-
-      if (message.sender.id !== auth.user?.id) void matchesApi.markRead(matchId.value)
     },
-    '.MessageRead': (payload: { user_id: number; read_at: string }) => {
-      if (payload.user_id === auth.user?.id) return
-
-      // They have read everything up to now, so every message of mine without
-      // a receipt gets one.
-      messages.value.forEach((message) => {
-        if (message.sender.id === auth.user?.id && !message.read_at) {
-          message.read_at = payload.read_at
-        }
-      })
-    },
+    '.MessageRead': (payload: { user_id: number; read_at: string; last_read_message_id: number }) =>
+      chat.applyReadReceipt(payload),
   },
 })
 
 /**
- * Presence channel: who is here, and who is typing.
+ * Presence and typing, on their own channel name.
  *
- * Separate from the private channel because they are different Pusher channels
- * (`presence-match.X` vs `private-match.X`), though one authorisation callback
- * serves both. Typing rides here as a whisper — client to client, never stored.
+ * Separate from the message channel on the server side too, so that hiding your
+ * online status keeps you out of the presence set without also cutting off your
+ * messages — see routes/channels.php.
  */
 const presenceChannel = useEchoChannel(
-  () => (matchId.value ? `match.${matchId.value}` : null),
+  () => (conversationId.value ? `conversation.${conversationId.value}.online` : null),
   {
     type: 'presence',
     onHere: (members: PresenceMember[]) =>
@@ -120,11 +168,9 @@ const presenceChannel = useEchoChannel(
 )
 
 const typing = useTypingIndicator((person) => presenceChannel.whisper('typing', person))
-
-/** Top-level so the template can read it without `.value`. */
 const typingLabel = typing.label
 
-function onInput() {
+function onTyping() {
   if (!auth.user) return
   typing.onLocalInput({ id: auth.user.id, name: auth.user.name })
 }
@@ -133,78 +179,28 @@ function onInput() {
 onEchoReconnect(() => {
   presence.reset()
   typing.reset()
-  if (matchId.value) void load()
+  if (conversationId.value) void load()
 })
 
 // -- data -------------------------------------------------------------------
 
-async function send() {
-  if (!body.value.trim() || !auth.user) return
-
-  const text = body.value
-  body.value = ''
-
-  const tempId = -Date.now()
-  const optimistic: Message = {
-    id: tempId,
-    match_id: matchId.value,
-    body: text,
-    type: 'text',
-    sender: auth.user,
-    read_at: null,
-    created_at: new Date().toISOString(),
-    pending: true,
-  }
-  messages.value.push(optimistic)
+async function send(body: string) {
+  await chat.send(body)
   void scrollToBottom()
+}
 
-  try {
-    const { data } = await matchesApi.sendMessage(matchId.value, text)
-    const index = messages.value.findIndex((m) => m.id === tempId)
-    if (index !== -1) messages.value.splice(index, 1)
-
-    if (!messages.value.some((m) => m.id === data.data.id)) {
-      messages.value.push(data.data)
-      void scrollToBottom()
-    }
-  } catch {
-    const optimisticMessage = messages.value.find((m) => m.id === tempId)
-    if (optimisticMessage) {
-      optimisticMessage.pending = false
-      optimisticMessage.failed = true
-    }
-  }
+async function retry(message: Message) {
+  await chat.retry(message)
+  void scrollToBottom()
 }
 
 async function load() {
-  loading.value = true
-  hasError.value = false
-
-  try {
-    const [matchRes, messagesRes] = await Promise.all([
-      matchesApi.show(matchId.value),
-      matchesApi.messages(matchId.value),
-    ])
-    match.value = matchRes.data.data
-    messages.value = messagesRes.data.data
-    void scrollToBottom()
-
-    void matchesApi.markRead(matchId.value)
-  } catch {
-    hasError.value = true
-  } finally {
-    loading.value = false
-  }
+  await chat.open(conversationId.value)
+  void scrollToBottom()
 }
 
-/**
- * Re-load when the route param changes, not only on mount.
- *
- * Vue Router reuses this component between /chats/1 and /chats/2, so an
- * `onMounted(load)` alone left the previous conversation on screen.
- */
 watch(
-  matchId,
+  conversationId,
   (id) => {
     if (!id) return
 
@@ -218,108 +214,77 @@ watch(
 
 <template>
   <AppLayout>
-    <div v-if="loading" class="flex flex-col h-[calc(100vh-64px)] md:h-screen">
-      <div class="flex items-center gap-3 px-4 md:px-8 py-3 border-b border-border bg-surface">
+    <div v-if="chat.loading" class="flex flex-col h-[calc(100vh-64px)] md:h-screen">
+      <div class="flex items-center gap-3 px-3 md:px-8 py-2.5 border-b border-border bg-surface">
         <Skeleton variant="circle" width="2.5rem" height="2.5rem" />
         <div class="flex-1 space-y-1.5">
           <Skeleton variant="text" width="30%" />
-          <Skeleton variant="text" width="50%" />
+          <Skeleton variant="text" width="20%" />
         </div>
+      </div>
+      <div class="flex-1 p-4 space-y-3">
+        <Skeleton v-for="i in 5" :key="i" variant="text" :width="i % 2 ? '55%' : '40%'" height="2.5rem" />
       </div>
     </div>
 
-    <ErrorState v-else-if="hasError" @retry="load" />
+    <ErrorState v-else-if="chat.hasError" @retry="load" />
 
-    <div v-else class="flex flex-col h-[calc(100vh-64px)] md:h-screen">
-      <div class="flex items-center gap-3 px-4 md:px-8 py-3 border-b border-border bg-surface">
-        <button
-          class="text-ink-muted text-lg md:hidden"
-          aria-label="Orqaga"
-          @click="router.push({ name: 'chats' })"
-        >
-          <FontAwesomeIcon :icon="icons.back" />
-        </button>
-
-        <div class="relative shrink-0">
-          <Avatar :src="otherPerson?.profile.avatar_url" :name="otherPerson?.name ?? ''" />
-          <span
-            v-if="otherIsOnline"
-            class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-success border-2 border-surface"
-            aria-label="Onlayn"
-          />
-        </div>
-
-        <div class="min-w-0 flex-1">
-          <p class="font-semibold text-ink">{{ otherPerson?.name }}</p>
-          <p v-if="typingLabel" class="text-xs text-primary-600 truncate">
-            {{ typingLabel }}
-          </p>
-          <p v-else-if="otherIsOnline" class="text-xs text-success truncate">Onlayn</p>
-          <p v-else class="text-xs text-ink-muted truncate">{{ match?.activity.title }}</p>
-        </div>
-
-        <ReportBlockMenu
-          v-if="otherPerson"
-          :user-id="otherPerson.id"
-          :user-name="otherPerson.name"
-        />
-      </div>
+    <div v-else-if="chat.active" class="flex flex-col h-[calc(100vh-64px)] md:h-screen">
+      <ChatHeader
+        :conversation="chat.active"
+        :online="counterpartOnline"
+        :typing-label="typingLabel"
+      />
 
       <ConnectionBanner />
 
-      <div ref="scrollArea" class="flex-1 overflow-y-auto px-4 md:px-8 py-4 space-y-3">
-        <div
-          v-for="message in messages"
-          :key="message.id"
-          class="flex flex-col"
-          :class="message.sender.id === auth.user?.id ? 'items-end' : 'items-start'"
-        >
-          <div
-            class="max-w-[75%] px-4 py-2.5 rounded-2xl text-[15px] transition-opacity"
-            :class="[
-              message.sender.id === auth.user?.id
-                ? 'bg-primary-600 text-white rounded-br-md'
-                : 'bg-surface-muted text-ink rounded-bl-md',
-              message.pending ? 'opacity-60' : '',
-              message.failed ? 'bg-danger-bg text-danger' : '',
-            ]"
-          >
-            {{ message.body }}
-            <span v-if="message.failed" class="block text-xs mt-0.5">Yuborilmadi</span>
-          </div>
+      <ActivityContext v-if="!isGroup" :activities="chat.activities" />
 
-          <span
-            v-if="message.id === lastReadOwnMessageId"
-            class="text-[11px] text-ink-faint mt-0.5 flex items-center gap-1"
-          >
-            <FontAwesomeIcon :icon="icons.check" class="text-[9px]" />
-            O'qildi {{ message.read_at ? formatTime(message.read_at) : '' }}
-          </span>
+      <div
+        ref="scrollArea"
+        class="flex-1 overflow-y-auto px-3 md:px-8 py-4 space-y-1.5"
+        @scroll.passive="onScroll"
+      >
+        <p v-if="chat.loadingOlder" class="text-center text-xs text-ink-faint py-2">
+          Yuklanmoqda...
+        </p>
+
+        <p
+          v-else-if="!chat.hasOlder && chat.messages.length > 0"
+          class="text-center text-xs text-ink-faint py-2"
+        >
+          Suhbat boshlanishi
+        </p>
+
+        <div v-if="chat.messages.length === 0" class="h-full flex items-center justify-center">
+          <p class="text-sm text-ink-muted text-center max-w-xs">
+            Hali xabar yo'q. Birinchi bo'lib yozing.
+          </p>
         </div>
 
-        <p v-if="typingLabel" class="text-xs text-ink-muted italic">
+        <template v-for="row in rows" :key="row.message.id">
+          <div v-if="row.daySeparator" class="flex justify-center py-2">
+            <span class="text-[11px] text-ink-muted bg-surface border border-border rounded-full px-3 py-1">
+              {{ row.daySeparator }}
+            </span>
+          </div>
+
+          <MessageBubble
+            :message="row.message"
+            :own="row.own"
+            :show-sender="isGroup"
+            :show-tail="row.showTail"
+            :is-last-read="row.message.id === lastReadOwnMessageId"
+            @retry="retry"
+          />
+        </template>
+
+        <p v-if="typingLabel" class="text-xs text-ink-muted italic px-1 pt-1">
           {{ typingLabel }}
         </p>
       </div>
 
-      <div class="px-4 md:px-8 py-3 border-t border-border bg-surface flex items-center gap-2">
-        <input
-          v-model="body"
-          type="text"
-          placeholder="Xabar yozing..."
-          class="flex-1 h-11 rounded-full bg-surface-muted px-4 text-[15px] outline-none"
-          @input="onInput"
-          @keyup.enter="send"
-        />
-        <button
-          class="w-11 h-11 rounded-full bg-primary-600 text-white flex items-center justify-center shrink-0 disabled:opacity-50"
-          :disabled="!body.trim()"
-          aria-label="Yuborish"
-          @click="send"
-        >
-          <FontAwesomeIcon :icon="icons.send" class="text-sm" />
-        </button>
-      </div>
+      <MessageComposer @send="send" @typing="onTyping" />
     </div>
   </AppLayout>
 </template>

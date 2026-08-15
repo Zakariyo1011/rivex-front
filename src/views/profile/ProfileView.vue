@@ -1,160 +1,80 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue'
-import AppButton from '@/components/ui/AppButton.vue'
-import AppInput from '@/components/ui/AppInput.vue'
+import ProfileSections from '@/components/profile/ProfileSections.vue'
 import { icons } from '@/lib/icons'
 import { useAuthStore } from '@/stores/auth'
-import { profileApi } from '@/api/profile'
+import { useProfileSectionsStore } from '@/stores/profileSections'
 import { locationsApi } from '@/api/locations'
-import { extractErrorMessage } from '@/composables/useApiError'
-import type { District, Region } from '@/types'
 
+/**
+ * Your own profile, as a profile — not as a form.
+ *
+ * This screen used to be both: a display card with an `editing` flag that
+ * turned parts of it into inputs, while `/profile/edit` held the username field
+ * and the section editor. The two were effectively swapped, which is why the
+ * handle was edited by tapping the handle and why "Edit profile" contained no
+ * profile fields.
+ *
+ * Everything editable now lives on /profile/edit. This screen shows what other
+ * people see, plus the owner-only things (phone, completion, follow requests).
+ */
 const auth = useAuthStore()
+const sections = useProfileSectionsStore()
 
-const editing = ref(false)
-const saving = ref(false)
-const error = ref('')
-const avatarFile = ref<File | null>(null)
-const avatarPreview = ref<string | null>(null)
-
-const editingLocation = ref(false)
-const savingLocation = ref(false)
-const locationError = ref('')
-const regions = ref<Region[]>([])
-const districts = ref<District[]>([])
-const regionId = ref<number | null>(null)
-const districtId = ref<number | null>(null)
-const currentRegionName = ref<string | null>(null)
-const currentDistrictName = ref<string | null>(null)
-
-const form = reactive({
-  name: auth.user?.name ?? '',
-  bio: auth.user?.profile.bio ?? '',
-  age: auth.user?.profile.age ?? '',
-  location_name: auth.user?.profile.location_name ?? '',
-})
-
-function onAvatarChange(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file) return
-  avatarFile.value = file
-  avatarPreview.value = URL.createObjectURL(file)
-}
-
-async function save() {
-  error.value = ''
-  saving.value = true
-  try {
-    const user = await profileApi.update({
-      name: form.name,
-      bio: form.bio,
-      age: form.age ? Number(form.age) : undefined,
-      location_name: form.location_name,
-      avatar: avatarFile.value ?? undefined,
-    })
-    auth.user = user.data.data
-    editing.value = false
-  } catch (e) {
-    error.value = extractErrorMessage(e)
-  } finally {
-    saving.value = false
-  }
-}
-
-async function loadDistricts(id: number) {
-  const { data } = await locationsApi.districts(id)
-  districts.value = data.data
-}
-
-async function onRegionChange() {
-  districtId.value = null
-  if (regionId.value) await loadDistricts(regionId.value)
-}
-
-async function startEditLocation() {
-  editingLocation.value = true
-  if (regions.value.length === 0) {
-    const { data } = await locationsApi.regions()
-    regions.value = data.data
-  }
-  if (regionId.value) await loadDistricts(regionId.value)
-}
-
-async function saveLocation() {
-  locationError.value = ''
-  savingLocation.value = true
-  try {
-    const { data } = await locationsApi.updateMe({
-      region_id: regionId.value,
-      district_id: districtId.value ?? undefined,
-    })
-    currentRegionName.value = data.data.region?.name ?? null
-    currentDistrictName.value = data.data.district?.name ?? null
-    editingLocation.value = false
-  } catch (e) {
-    locationError.value = extractErrorMessage(e)
-  } finally {
-    savingLocation.value = false
-  }
-}
+const regionName = ref<string | null>(null)
+const districtName = ref<string | null>(null)
 
 onMounted(async () => {
   await auth.fetchMe()
+  void sections.fetch()
 
-  const { data } = await locationsApi.me()
-  regionId.value = data.data.region?.id ?? null
-  districtId.value = data.data.district?.id ?? null
-  currentRegionName.value = data.data.region?.name ?? null
-  currentDistrictName.value = data.data.district?.name ?? null
+  try {
+    const { data } = await locationsApi.me()
+    regionName.value = data.data.region?.name ?? null
+    districtName.value = data.data.district?.name ?? null
+  } catch {
+    regionName.value = null
+  }
 })
 </script>
 
 <template>
   <AppLayout>
+    <template #header>
+      <h1 class="text-lg font-bold text-ink truncate">Profil</h1>
+    </template>
+
     <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-xl pb-8">
       <div class="card p-6 text-center">
-        <label class="relative inline-block cursor-pointer">
-          <div class="w-20 h-20 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-2xl font-semibold overflow-hidden mx-auto">
-            <img
-              v-if="avatarPreview || auth.user?.profile.avatar_url"
-              :src="avatarPreview ?? auth.user?.profile.avatar_url!"
-              class="w-full h-full object-cover"
-            />
-            <span v-else>{{ auth.user?.display_name?.[0] }}</span>
-          </div>
-          <span
-            v-if="editing"
-            class="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-primary-600 text-white flex items-center justify-center text-xs"
-          >
-            <FontAwesomeIcon :icon="icons.edit" />
-          </span>
-          <input v-if="editing" type="file" accept="image/*" class="hidden" @change="onAvatarChange" />
-        </label>
+        <div
+          class="w-20 h-20 rounded-full bg-primary-100 text-primary-700 flex items-center justify-center text-2xl font-semibold overflow-hidden mx-auto"
+        >
+          <img
+            v-if="auth.user?.profile.avatar_url"
+            :src="auth.user.profile.avatar_url"
+            class="w-full h-full object-cover"
+            alt=""
+          />
+          <span v-else>{{ auth.user?.display_name?.[0] }}</span>
+        </div>
 
         <h1 class="text-lg font-bold text-ink mt-3 flex items-center justify-center gap-1.5">
           {{ auth.user?.display_name }}
-          <FontAwesomeIcon v-if="auth.user?.identity_verified" :icon="icons.verified" class="text-primary-500 text-sm" />
+          <FontAwesomeIcon
+            v-if="auth.user?.identity_verified"
+            :icon="icons.verified"
+            class="text-primary-500 text-sm"
+          />
         </h1>
 
-        <!-- Editing a handle you already hold is not onboarding. That route
-             renders the auth layout with no navigation, starts from an empty
-             field, and on success pushes into the interests step — so an
-             established user who only wanted to fix a typo ended up being
-             walked through sign-up again. -->
-        <RouterLink
-          v-if="auth.user?.username"
-          to="/profile/edit"
-          class="text-sm text-ink-faint hover:text-primary-600 transition-colors"
-        >
-          @{{ auth.user.username }}
-        </RouterLink>
+        <!-- Plain text. It was a link into the edit screen, which made the
+             handle look like the thing you tap to rename yourself — the odd
+             flow this phase removes. It is an identity here, not a control. -->
+        <p v-if="auth.user?.username" class="text-sm text-ink-faint">@{{ auth.user.username }}</p>
 
         <p class="text-sm text-ink-muted">{{ auth.user?.phone }}</p>
 
-        <!-- Your own counts are always yours to see; `who_can_see_followers`
-             governs who else may, never the account holder. The request badge
-             is a to-do, so it only appears when there is something to do. -->
         <div
           v-if="auth.followCounts && auth.user"
           class="flex items-center justify-center gap-5 mt-3 text-sm"
@@ -184,10 +104,18 @@ onMounted(async () => {
           {{ auth.followCounts.pending_requests }} ta kuzatuv so'rovi
         </RouterLink>
 
-        <!-- Completion, owner-only. Doubles as the way into the section editor. -->
+        <!-- The one way into editing, and it says so. -->
+        <RouterLink
+          :to="{ name: 'profile-edit' }"
+          class="mt-4 inline-flex items-center justify-center gap-2 h-10 px-5 rounded-full border border-border bg-surface text-sm font-medium text-ink-secondary hover:border-primary-300 hover:text-primary-700 transition-colors"
+        >
+          <FontAwesomeIcon :icon="icons.edit" class="text-[0.7rem]" />
+          Profilni tahrirlash
+        </RouterLink>
+
         <RouterLink
           v-if="auth.completion && auth.completion.percent < 100"
-          to="/profile/edit"
+          :to="{ name: 'profile-edit' }"
           class="block mt-4 pt-4 border-t border-border text-left"
         >
           <div class="flex items-center justify-between mb-1.5">
@@ -200,7 +128,7 @@ onMounted(async () => {
               :style="{ width: `${auth.completion.percent}%` }"
             />
           </div>
-          <p class="text-xs text-ink-faint mt-1.5">Bo'lim qo'shish uchun bosing</p>
+          <p class="text-xs text-ink-faint mt-1.5">To'ldirish uchun bosing</p>
         </RouterLink>
 
         <div class="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border">
@@ -231,87 +159,31 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="card p-5 mt-4">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="font-semibold text-ink">Profil ma'lumotlari</h2>
-          <button class="text-sm text-primary-600 font-medium" @click="editing = !editing">
-            {{ editing ? 'Bekor qilish' : "Tahrirlash" }}
-          </button>
-        </div>
+      <div
+        v-if="auth.user?.profile.bio || auth.user?.profile.location_name || auth.user?.profile.age || regionName"
+        class="card p-5 mt-4"
+      >
+        <h2 class="font-semibold text-ink mb-3">Profil ma'lumotlari</h2>
 
-        <div v-if="editing" class="space-y-4">
-          <AppInput v-model="form.name" label="Ism" />
-          <label class="block">
-            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Bio</span>
-            <textarea
-              v-model="form.bio"
-              rows="3"
-              class="w-full rounded-xl border border-border p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
-            />
-          </label>
-          <AppInput v-model.number="form.age" label="Yosh" type="number" />
-          <AppInput v-model="form.location_name" label="Manzil" placeholder="Tashkent, Uzbekistan" />
-
-          <p v-if="error" class="text-sm text-danger">{{ error }}</p>
-
-          <AppButton :loading="saving" @click="save">Saqlash</AppButton>
-        </div>
-
-        <div v-else class="space-y-2 text-sm">
-          <p v-if="auth.user?.profile.bio" class="text-ink-secondary">{{ auth.user.profile.bio }}</p>
+        <div class="space-y-2 text-sm">
+          <p v-if="auth.user?.profile.bio" class="text-ink-secondary">
+            {{ auth.user.profile.bio }}
+          </p>
           <p v-if="auth.user?.profile.location_name" class="text-ink-muted flex items-center gap-1.5">
-            <FontAwesomeIcon :icon="icons.location" class="text-ink-faint text-xs" /> {{ auth.user.profile.location_name }}
+            <FontAwesomeIcon :icon="icons.location" class="text-ink-faint text-xs" />
+            {{ auth.user.profile.location_name }}
+          </p>
+          <p v-if="regionName" class="text-ink-muted flex items-center gap-1.5">
+            <FontAwesomeIcon :icon="icons.locateMe" class="text-ink-faint text-xs" />
+            {{ regionName }}<span v-if="districtName">, {{ districtName }}</span>
           </p>
           <p v-if="auth.user?.profile.age" class="text-ink-muted">{{ auth.user.profile.age }} yosh</p>
         </div>
       </div>
 
-      <div class="card p-5 mt-4">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="font-semibold text-ink">Joylashuv</h2>
-          <button class="text-sm text-primary-600 font-medium" @click="editingLocation ? (editingLocation = false) : startEditLocation()">
-            {{ editingLocation ? 'Bekor qilish' : "Tahrirlash" }}
-          </button>
-        </div>
-
-        <div v-if="editingLocation" class="space-y-4">
-          <label class="block">
-            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Viloyat</span>
-            <select
-              v-model.number="regionId"
-              class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100"
-              @change="onRegionChange"
-            >
-              <option :value="null" disabled>Viloyatni tanlang</option>
-              <option v-for="r in regions" :key="r.id" :value="r.id">{{ r.name }}</option>
-            </select>
-          </label>
-
-          <label class="block">
-            <span class="block text-sm font-medium text-ink-secondary mb-1.5">Tuman</span>
-            <select
-              v-model.number="districtId"
-              :disabled="!regionId"
-              class="w-full h-12 px-4 rounded-xl border border-border bg-surface text-[15px] outline-none focus:ring-2 focus:ring-primary-100 disabled:bg-surface-muted disabled:text-ink-faint"
-            >
-              <option :value="null">Tuman tanlanmagan</option>
-              <option v-for="d in districts" :key="d.id" :value="d.id">{{ d.name }}</option>
-            </select>
-          </label>
-
-          <p v-if="locationError" class="text-sm text-danger">{{ locationError }}</p>
-
-          <AppButton :loading="savingLocation" @click="saveLocation">Saqlash</AppButton>
-        </div>
-
-        <div v-else class="text-sm">
-          <p v-if="currentRegionName" class="text-ink-muted flex items-center gap-1.5">
-            <FontAwesomeIcon :icon="icons.location" class="text-ink-faint text-xs" />
-            {{ currentRegionName }}<span v-if="currentDistrictName">, {{ currentDistrictName }}</span>
-          </p>
-          <p v-else class="text-ink-faint">Joylashuv tanlanmagan</p>
-        </div>
-      </div>
+      <!-- Interests, skills, hobbies, languages and the rest, exactly as
+           another person would see them. -->
+      <ProfileSections :sections="sections.sections" class="mt-4" />
 
       <div class="mt-4">
         <RouterLink to="/settings" class="card card-hover p-4 flex items-center justify-between">

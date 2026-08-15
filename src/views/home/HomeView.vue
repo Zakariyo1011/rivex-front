@@ -55,6 +55,10 @@ onMounted(load)
 
 <template>
   <AppLayout>
+    <template #header>
+      <h1 class="text-lg font-bold text-ink truncate">Rivex</h1>
+    </template>
+
     <div class="px-4 md:px-8 pt-6 md:pt-8">
       <div class="flex items-center justify-between mb-5 pr-14 md:pr-0">
         <div>

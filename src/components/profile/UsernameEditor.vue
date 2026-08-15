@@ -100,7 +100,10 @@ watch(canChange, (allowed) => {
 </script>
 
 <template>
-  <AppCard class="mb-4">
+  <!-- `id` is the target of /profile/edit#username from Settings → Account, so
+       the handle is reachable in one tap without a second screen duplicating
+       the rules. `scroll-mt` keeps it clear of the sticky header. -->
+  <AppCard id="username" class="mb-4 scroll-mt-20">
     <div class="flex items-center justify-between gap-3 mb-1">
       <h2 class="font-semibold text-ink">Foydalanuvchi nomi</h2>
       <button

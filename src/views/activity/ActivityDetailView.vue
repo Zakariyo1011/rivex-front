@@ -18,7 +18,7 @@ import NoShowReportModal from '@/components/activity/NoShowReportModal.vue'
 import ReviewModal from '@/components/activity/ReviewModal.vue'
 import { activitiesApi } from '@/api/activities'
 import { applicationsApi } from '@/api/applications'
-import { matchesApi } from '@/api/matches'
+import { conversationsApi } from '@/api/conversations'
 import { invoicesApi } from '@/api/invoices'
 import { useAuthStore } from '@/stores/auth'
 import { useEchoChannel } from '@/composables/useEchoChannel'
@@ -29,7 +29,6 @@ import { useVerificationGuard } from '@/composables/useVerificationGuard'
 import { categoryIcon, icons } from '@/lib/icons'
 import type {
   Activity,
-  ActivityMatch,
   ActivityStatus,
   Application,
   CancellationReason,
@@ -38,6 +37,7 @@ import type {
 } from '@/types'
 import { formatActivityStartLong, formatMoney } from '@/lib/datetime'
 import { activityStatus, cancellationReasons } from '@/lib/statusLabels'
+import { userProfileRoute } from '@/lib/userLink'
 
 const route = useRoute()
 const router = useRouter()
@@ -46,7 +46,14 @@ const toast = useToast()
 const verificationGuard = useVerificationGuard()
 
 const activity = ref<Activity | null>(null)
-const match = ref<ActivityMatch | null>(null)
+/**
+ * The conversation this activity's chat lives in, once one exists.
+ *
+ * Asked of the server rather than derived: a two-person activity routes to the
+ * pair's *direct* conversation, which carries no activity_id and so cannot be
+ * picked out of a list client-side. 404 simply means no chat yet.
+ */
+const conversationId = ref<number | null>(null)
 const invoices = ref<Invoice[]>([])
 const loading = ref(true)
 const hasError = ref(false)
@@ -135,15 +142,25 @@ async function load() {
           a.activity.id === data.data.id && a.status !== 'cancelled' && a.status !== 'rejected',
       ) ?? null
 
+    // The chat is asked for regardless of the activity's status, and the
+    // endpoint's own 404 is the answer to "is there one yet".
+    //
+    // This used to be gated on the activity having left `published`, which was
+    // a stale coupling: a conversation exists the moment one person is
+    // accepted, long before an activity fills up. A participant on a
+    // half-full activity therefore had a chat, saw it in their chat list, and
+    // found no way into it from the activity itself.
+    const conversationRes = await conversationsApi.forActivity(activity.value.id).catch(() => null)
+    conversationId.value = conversationRes?.data.data.id ?? null
+
+    // Invoices, on the other hand, genuinely only exist once someone has been
+    // accepted onto a paid activity.
     if (activity.value.status !== 'published' && activity.value.status !== 'draft') {
       const needsInvoice = !['free', 'shared_cost'].includes(activity.value.payment_type)
-      const [matchesRes, invoicesRes] = await Promise.all([
-        matchesApi.list(),
-        needsInvoice
-          ? invoicesApi.mine(activity.value.id).catch(() => ({ data: { data: [] } }))
-          : Promise.resolve({ data: { data: [] as Invoice[] } }),
-      ])
-      match.value = matchesRes.data.data.find((m) => m.activity.id === activity.value?.id) ?? null
+      const invoicesRes = needsInvoice
+        ? await invoicesApi.mine(activity.value.id).catch(() => ({ data: { data: [] } }))
+        : { data: { data: [] as Invoice[] } }
+
       invoices.value = invoicesRes.data.data
     }
   } catch {
@@ -364,7 +381,7 @@ onMounted(load)
 
           <div class="mt-5 pt-5 border-t border-border flex items-center justify-between gap-3">
             <RouterLink
-              :to="{ name: 'user-profile', params: { id: activity.owner.id } }"
+              :to="userProfileRoute(activity.owner)!"
               class="flex items-center gap-3 min-w-0"
             >
               <Avatar
@@ -393,7 +410,7 @@ onMounted(load)
         </div>
 
         <!-- Commission invoice section -->
-        <div v-if="match && myOwedInvoice" class="card p-5 mt-4">
+        <div v-if="conversationId && myOwedInvoice" class="card p-5 mt-4">
           <h2 class="font-semibold text-ink mb-1">Platforma komissiyasi</h2>
           <p class="text-sm text-ink-muted mb-3">
             Faoliyat summasi ({{ formatMoney(activity.amount) }}) tomonlar o'rtasida hal qilinadi.
@@ -413,7 +430,7 @@ onMounted(load)
             To'lash
           </AppButton>
         </div>
-        <div v-else-if="match && myPaidInvoice" class="card p-5 mt-4">
+        <div v-else-if="conversationId && myPaidInvoice" class="card p-5 mt-4">
           <div
             class="rounded-xl bg-success-bg text-success px-4 py-3 text-sm font-medium flex items-center gap-2"
           >
@@ -471,10 +488,10 @@ onMounted(load)
           </template>
 
           <AppButton
-            v-if="isParticipant && match"
+            v-if="isParticipant && conversationId"
             variant="outline"
             :icon="icons.chat"
-            @click="router.push({ name: 'chat-detail', params: { matchId: match.id } })"
+            @click="router.push({ name: 'chat-detail', params: { conversationId } })"
           >
             Chatga o'tish
           </AppButton>

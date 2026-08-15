@@ -6,6 +6,7 @@ import FollowButton from '@/components/profile/FollowButton.vue'
 import { icons } from '@/lib/icons'
 import type { SearchRelationship } from '@/api/search'
 import type { FollowRelationship, User } from '@/types'
+import { userProfileRoute } from '@/lib/userLink'
 
 const props = defineProps<{
   user: User
@@ -31,11 +32,7 @@ const relationship = computed<FollowRelationship>(() => ({
 
 const isSelf = computed(() => props.viewerId != null && props.viewerId === props.user.id)
 
-const to = computed(() =>
-  props.user.username
-    ? { name: 'user-profile-by-username', params: { username: props.user.username } }
-    : { name: 'user-profile', params: { id: String(props.user.id) } },
-)
+const to = computed(() => userProfileRoute(props.user)!)
 </script>
 
 <template>

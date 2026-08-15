@@ -7,6 +7,8 @@ export interface PrivacySettings {
   profile_visibility: Visibility
   who_can_follow: FollowPolicy
   who_can_see_followers: Visibility
+  /** Who may *start* a conversation. Existing threads are unaffected. */
+  who_can_message: Visibility
   discoverable_in_search: boolean
   show_online_status: boolean
   /** Derived on the server from `profile_visibility` — never sent back. */

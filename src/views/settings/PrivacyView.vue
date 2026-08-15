@@ -135,6 +135,40 @@ onMounted(() => privacy.fetch())
           </label>
         </AppCard>
 
+        <!-- Who may open a conversation -->
+        <AppCard padding="none">
+          <div class="p-4 pb-2">
+            <h2 class="font-semibold text-ink flex items-center gap-2">
+              <FontAwesomeIcon :icon="icons.chat" class="text-ink-faint w-4" />
+              Kim sizga xabar yoza oladi
+            </h2>
+            <!-- Said plainly, because the alternative reading is alarming: a
+                 person narrowing this does not want to discover later that it
+                 also cut off people they were already talking to. -->
+            <p class="text-xs text-ink-muted mt-1">
+              Bu faqat yangi suhbatlarga taalluqli. Mavjud suhbatlaringiz o'zgarmaydi.
+            </p>
+          </div>
+
+          <label
+            v-for="option in privacy.options.visibility"
+            :key="option.value"
+            class="flex items-start gap-3 px-4 py-3.5 border-t border-border cursor-pointer hover:bg-surface-muted transition"
+          >
+            <input
+              type="radio"
+              name="who_can_message"
+              class="mt-1 accent-primary-600"
+              :value="option.value"
+              :checked="privacy.settings.who_can_message === option.value"
+              @change="privacy.update({ who_can_message: option.value as Visibility })"
+            />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium text-ink">{{ option.label }}</span>
+            </span>
+          </label>
+        </AppCard>
+
         <!-- Switches -->
         <AppCard padding="none">
           <div class="p-4 pb-2">

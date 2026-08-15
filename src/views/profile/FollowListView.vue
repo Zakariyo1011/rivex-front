@@ -15,6 +15,7 @@ import { followsApi, type FollowListUser } from '@/api/follows'
 import { useAuthStore } from '@/stores/auth'
 import { icons } from '@/lib/icons'
 import type { FollowRelationship } from '@/types'
+import { userProfileRoute } from '@/lib/userLink'
 
 /**
  * Followers and following for one account, plus the owner's own request inbox.
@@ -207,11 +208,7 @@ load()
         <ul class="space-y-2">
           <li v-for="person in people" :key="person.id" class="card p-3 flex items-center gap-3">
             <RouterLink
-              :to="
-                person.username
-                  ? { name: 'user-profile-by-username', params: { username: person.username } }
-                  : { name: 'user-profile', params: { id: String(person.id) } }
-              "
+              :to="userProfileRoute(person)!"
               class="flex items-center gap-3 flex-1 min-w-0"
             >
               <Avatar :src="person.profile?.avatar_url" :name="person.display_name" size="md" />

@@ -3,6 +3,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import Avatar from '@/components/ui/Avatar.vue'
+import NotificationBell from '@/components/layout/NotificationBell.vue'
 import { mainNavItems } from '@/lib/nav'
 import { icons } from '@/lib/icons'
 
@@ -32,6 +33,10 @@ const auth = useAuthStore()
     </RouterLink>
 
     <nav class="flex-1 space-y-1">
+      <!-- Notifications sit with the rest of the navigation rather than
+           floating over the page. See AppLayout for what this replaces. -->
+      <NotificationBell variant="nav" />
+
       <RouterLink
         v-for="item in mainNavItems"
         :key="item.name"

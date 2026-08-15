@@ -85,6 +85,10 @@ onMounted(loadApplications)
 
 <template>
   <AppLayout>
+    <template #header>
+      <h1 class="text-lg font-bold text-ink truncate">Arizalar</h1>
+    </template>
+
     <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-2xl">
       <AppTabs :tabs="tabs" :model-value="tab" class="mb-5" @update:model-value="selectTab" />
 

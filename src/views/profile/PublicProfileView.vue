@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import ProfileSections from '@/components/profile/ProfileSections.vue'
 import ReportBlockMenu from '@/components/profile/ReportBlockMenu.vue'
-import FollowButton from '@/components/profile/FollowButton.vue'
+import ProfileActions from '@/components/profile/ProfileActions.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
@@ -14,7 +14,7 @@ import { profileApi } from '@/api/profile'
 import { useAuthStore } from '@/stores/auth'
 import { icons } from '@/lib/icons'
 import type { ProfileSection } from '@/api/sections'
-import type { FollowCounts, FollowRelationship, User, Review } from '@/types'
+import type { FollowCounts, FollowRelationship, MessagingState, User, Review } from '@/types'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -37,6 +37,14 @@ const relationship = ref<FollowRelationship | null>(null)
 const followCounts = ref<FollowCounts | null>(null)
 
 /**
+ * Whether "Xabar" is offered, and what to say when it is not.
+ *
+ * Beside `data` for the same reason `relationship` is: it is viewer-relative,
+ * and the user resource is the shape that gets broadcast to everybody.
+ */
+const messaging = ref<MessagingState | null>(null)
+
+/**
  * One screen, two URLs: `/u/{username}` is canonical, `/users/{id}` is the
  * legacy route that internal links still produce. Both render the same
  * profile, so the only difference is how the first request is addressed —
@@ -49,6 +57,7 @@ async function load() {
   sections.value = []
   relationship.value = null
   followCounts.value = null
+  messaging.value = null
   try {
     const username = route.params.username as string | undefined
 
@@ -64,9 +73,11 @@ async function load() {
     const extra = userRes.data as {
       relationship?: FollowRelationship
       follow_counts?: FollowCounts | null
+      messaging?: MessagingState
     }
     relationship.value = extra.relationship ?? null
     followCounts.value = extra.follow_counts ?? null
+    messaging.value = extra.messaging ?? null
 
     reviews.value = []
 
@@ -189,10 +200,11 @@ onMounted(load)
         <!-- Rendered for a restricted profile too: this is exactly the screen
              where somebody decides whether to ask, and the button carries the
              pending state that tells them they already have. -->
-        <div v-if="relationship && user.id !== auth.user?.id" class="mt-4 flex justify-center">
-          <FollowButton
+        <div v-if="relationship && user.id !== auth.user?.id" class="mt-4">
+          <ProfileActions
             :user-id="user.id"
             :relationship="relationship"
+            :messaging="messaging"
             @update:relationship="applyRelationship"
           />
         </div>

@@ -80,6 +80,10 @@ onUnmounted(() => observer?.disconnect())
 
 <template>
   <AppLayout>
+    <template #header>
+      <h1 class="text-lg font-bold text-ink truncate">Bildirishnomalar</h1>
+    </template>
+
     <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-2xl">
       <!-- pr-14 clears the notification bell, which AppLayout pins to the
            top-right corner over the page content on small screens. -->

@@ -141,20 +141,9 @@ export interface Application {
   created_at: string
 }
 
-/** A user in the context of a match. Alias, not a distinct shape. */
-export type MatchParticipant = User
-
-export interface ActivityMatch {
-  id: number
-  status: 'active' | 'cancelled' | 'completed'
-  activity: Activity
-  participants: MatchParticipant[]
-  created_at: string
-}
-
 export interface Message {
   id: number
-  match_id: number
+  conversation_id: number
   body: string
   type: 'text' | 'image'
   sender: User
@@ -163,6 +152,42 @@ export interface Message {
   created_at: string
   pending?: boolean
   failed?: boolean
+}
+
+/**
+ * Whether this viewer may open a conversation with the profile they are looking
+ * at, and why not when they may not.
+ *
+ * The reason for a block is deliberately worded as "no such user" — the same
+ * answer a missing account gets — so the button cannot be used to detect one.
+ */
+export interface MessagingState {
+  can_message: boolean
+  reason: string | null
+}
+
+/**
+ * A chat thread.
+ *
+ * `direct` is identified by the two people in it and is the *only* thread they
+ * will ever have, however many activities they share. `activity` is a group
+ * room identified by its activity.
+ *
+ * The two carry different identities on purpose: a direct conversation has a
+ * `counterpart` and no `activity`, a group one the reverse. Rendering the
+ * activity title as the name of a direct thread is what made four activities
+ * with the same person look like four different chats.
+ */
+export interface Conversation {
+  id: number
+  type: 'direct' | 'activity'
+  counterpart: User | null
+  activity: Activity | null
+  participants?: User[]
+  last_message?: Message | null
+  last_message_at: string | null
+  unread_count: number
+  created_at: string
 }
 
 export interface AppNotification {

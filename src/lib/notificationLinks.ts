@@ -2,6 +2,7 @@ import type { RouteLocationRaw } from 'vue-router'
 import { icons } from './icons'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import type { AppNotification } from '@/types'
+import { userProfileRoute } from '@/lib/userLink'
 
 /**
  * Where tapping a notification should take you, and how it should look.
@@ -36,6 +37,13 @@ const incomingApplicationsLink = (notification: AppNotification): RouteLocationR
 }
 
 const noShowLink = (): RouteLocationRaw => ({ name: 'no-show-reports' })
+
+/** Straight into the thread the message arrived in. */
+const conversationLink = (notification: AppNotification): RouteLocationRaw | null => {
+  const id = notification.data.conversation_id
+
+  return id ? { name: 'chat-detail', params: { conversationId: String(id) } } : null
+}
 const walletLink = (): RouteLocationRaw => ({ name: 'wallet' })
 
 /**
@@ -44,15 +52,11 @@ const walletLink = (): RouteLocationRaw => ({ name: 'wallet' })
  * Follow notifications carry both, because an account may not have claimed a
  * username yet and the legacy id route still resolves.
  */
-const followerLink = (notification: AppNotification): RouteLocationRaw | null => {
-  const username = notification.data.username
-  if (username) {
-    return { name: 'user-profile-by-username', params: { username: String(username) } }
-  }
-
-  const id = notification.data.user_id
-  return id ? { name: 'user-profile', params: { id: String(id) } } : null
-}
+const followerLink = (notification: AppNotification): RouteLocationRaw | null =>
+  userProfileRoute({
+    id: Number(notification.data.user_id),
+    username: notification.data.username ? String(notification.data.username) : null,
+  })
 
 const PRESENTATION: Record<string, NotificationPresentation> = {
   // Applications
@@ -75,6 +79,9 @@ const PRESENTATION: Record<string, NotificationPresentation> = {
   new_follower: { icon: icons.people, tone: 'primary', to: followerLink },
   follow_request: { icon: icons.people, tone: 'primary', to: followerLink },
   follow_accepted: { icon: icons.check, tone: 'success', to: followerLink },
+
+  // Chat
+  new_message: { icon: icons.chat, tone: 'primary', to: conversationLink },
 
   // Money
   payment_successful: { icon: icons.amount, tone: 'success', to: walletLink },

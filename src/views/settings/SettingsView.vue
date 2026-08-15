@@ -110,8 +110,11 @@ async function confirmDeleteAccount() {
 
       <AppCard class="mb-4" padding="none">
         <h2 class="font-semibold text-ink p-4 pb-2">{{ t('settings.account') }}</h2>
+        <!-- The edit screen, not the display page. This pointed at /profile,
+             which is where the inline edit form used to live; the two have been
+             separated and this is where editing happens now. -->
         <RouterLink
-          to="/profile"
+          to="/profile/edit"
           class="flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition"
         >
           <span class="flex items-center gap-3 text-sm font-medium text-ink">
@@ -119,6 +122,25 @@ async function confirmDeleteAccount() {
             {{ t('settings.editProfile') }}
           </span>
           <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+        </RouterLink>
+
+        <!-- Same screen, straight to the handle. A second route with its own
+             copy of the username rules would be two places to keep in step with
+             UsernameService; an anchor is not. -->
+        <RouterLink
+          to="/profile/edit#username"
+          class="flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition"
+        >
+          <span class="flex items-center gap-3 text-sm font-medium text-ink">
+            <FontAwesomeIcon :icon="icons.profile" class="text-ink-faint w-4" />
+            Foydalanuvchi nomi
+          </span>
+          <span class="flex items-center gap-2">
+            <span v-if="auth.user?.username" class="text-sm text-ink-muted">
+              @{{ auth.user.username }}
+            </span>
+            <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+          </span>
         </RouterLink>
       </AppCard>
 

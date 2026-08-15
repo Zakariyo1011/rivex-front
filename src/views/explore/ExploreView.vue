@@ -246,8 +246,12 @@ onMounted(async () => {
 
 <template>
   <AppLayout>
+    <template #header>
+      <h1 class="text-lg font-bold text-ink truncate">Faoliyatlar</h1>
+    </template>
+
     <div class="px-4 md:px-8 pt-6 md:pt-8 pb-4">
-      <h1 class="text-xl font-bold text-ink mb-4">Qidiruv</h1>
+      <h1 class="hidden tablet:block text-xl font-bold text-ink mb-4">Faoliyatlar</h1>
 
       <div class="flex items-center gap-2.5 mb-4">
         <AppSearchInput

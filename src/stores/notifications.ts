@@ -25,6 +25,42 @@ export const useNotificationsStore = defineStore('notifications', () => {
   const lastPage = ref(1)
   const unreadOnly = ref(false)
 
+  /**
+   * The conversation the user is currently reading, if any.
+   *
+   * Set by the chat store. A `new_message` notification for this conversation
+   * is dropped rather than badged: the user is looking at the message as it
+   * arrives, and a bell that lights up for something already on screen is how
+   * people learn to ignore the bell.
+   *
+   * Held here rather than read from the chat store so the dependency runs one
+   * way — chat knows about notifications, notifications knows nothing about
+   * chat.
+   */
+  const activeConversationId = ref<number | null>(null)
+
+  function setActiveConversation(id: number | null) {
+    activeConversationId.value = id
+
+    if (id !== null) dismissForConversation(id)
+  }
+
+  /** Drop unread rows for a conversation the user has just read. */
+  function dismissForConversation(conversationId: number) {
+    const affected = notifications.value.filter(
+      (n) => n.type === 'new_message' && !n.read && Number(n.data.conversation_id) === conversationId,
+    )
+
+    if (affected.length === 0) return
+
+    affected.forEach((n) => (n.read = true))
+    unreadCount.value = Math.max(0, unreadCount.value - affected.length)
+
+    if (unreadOnly.value) {
+      notifications.value = notifications.value.filter((n) => !affected.includes(n))
+    }
+  }
+
   /** Drives the "load more" affordance and the infinite-scroll sentinel. */
   const hasMore = computed(() => currentPage.value < lastPage.value)
 
@@ -126,6 +162,16 @@ export const useNotificationsStore = defineStore('notifications', () => {
     // may already be present from a refetch that raced it.
     if (notifications.value.some((n) => n.id === payload.id)) return
 
+    // Already on screen — see activeConversationId. The server marks the row
+    // read when the conversation is opened, so nothing is lost by not badging
+    // it here.
+    if (
+      payload.type === 'new_message' &&
+      Number(payload.conversation_id) === activeConversationId.value
+    ) {
+      return
+    }
+
     const notification: AppNotification = {
       id: payload.id,
       type: payload.type,
@@ -183,6 +229,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
     setUnreadOnly,
     markRead,
     markAllRead,
+    setActiveConversation,
+    dismissForConversation,
     subscribe,
     reset,
     handleIncoming,

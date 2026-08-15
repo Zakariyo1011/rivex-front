@@ -16,6 +16,7 @@ import { useRecentSearches } from '@/composables/useRecentSearches'
 import { useAuthStore } from '@/stores/auth'
 import { icons } from '@/lib/icons'
 import type { Activity, Category, FollowRelationship, User } from '@/types'
+import { userProfileRoute } from '@/lib/userLink'
 
 /**
  * Global search.
@@ -247,11 +248,9 @@ function pickSuggestion(suggestion: Suggestion) {
   showSuggestions.value = false
 
   if (suggestion.type === 'users') {
-    router.push(
-      suggestion.username
-        ? { name: 'user-profile-by-username', params: { username: suggestion.username } }
-        : { name: 'user-profile', params: { id: String(suggestion.id) } },
-    )
+    const target = userProfileRoute({ id: suggestion.id, username: suggestion.username })
+    if (target) router.push(target)
+
     return
   }
 
@@ -290,8 +289,12 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
 
 <template>
   <AppLayout>
+    <template #header>
+      <h1 class="text-lg font-bold text-ink truncate">Qidiruv</h1>
+    </template>
+
     <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-2xl pb-10">
-      <h1 class="text-xl font-bold text-ink mb-4">Qidiruv</h1>
+      <h1 class="hidden tablet:block text-xl font-bold text-ink mb-4">Qidiruv</h1>
 
       <div class="relative">
         <AppSearchInput

@@ -15,6 +15,7 @@ import { extractErrorMessage } from '@/composables/useApiError'
 import { icons } from '@/lib/icons'
 import type { Application } from '@/types'
 import { applicationStatus } from '@/lib/statusLabels'
+import { userProfileRoute } from '@/lib/userLink'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,7 +97,7 @@ onMounted(load)
       <div v-else class="space-y-3">
         <div v-for="application in applications" :key="application.id" class="card card-hover p-4">
           <RouterLink
-            :to="{ name: 'user-profile', params: { id: application.applicant.id } }"
+            :to="userProfileRoute(application.applicant)!"
             class="flex items-center gap-3 mb-3"
           >
             <Avatar
