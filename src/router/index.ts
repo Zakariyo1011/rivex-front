@@ -97,6 +97,23 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // Editing reuses the create form's *logic* (lib/activityForm) but not its
+      // wizard: you arrive knowing the one thing you came to change.
+      path: '/activities/:id/edit',
+      name: 'activity-edit',
+      component: () => import('@/views/activity/EditActivityView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // The middle tab of Activities: everything this user organises or joined.
+      // A route rather than component state so the tab is linkable and answers
+      // the back button — see ActivitiesTabs.
+      path: '/me/activities',
+      name: 'my-activities',
+      component: () => import('@/views/activity/MyActivitiesView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/applications',
       name: 'applications',
       component: () => import('@/views/applications/ApplicationsView.vue'),
@@ -166,6 +183,23 @@ const router = createRouter({
       path: '/notifications',
       name: 'notifications',
       component: () => import('@/views/notifications/NotificationsView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // Account — what this account *is*, as opposed to how it is secured
+      // (Security) or what it shows (Privacy).
+      path: '/settings/account',
+      name: 'account-settings',
+      component: () => import('@/views/settings/AccountView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // The only route that edits a handle. It used to be an anchor into the
+      // middle of the profile editor, which is why tapping your own @name
+      // opened a form.
+      path: '/settings/account/username',
+      name: 'username-settings',
+      component: () => import('@/views/settings/UsernameView.vue'),
       meta: { requiresAuth: true },
     },
     {

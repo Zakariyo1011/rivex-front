@@ -46,8 +46,21 @@ async function load() {
   }
 }
 
+/**
+ * Home's search field opens search.
+ *
+ * 🔴 It used to open **Explore**, which browses activities and cannot find a
+ * person. That mattered more than it looks: the mobile navigation had given up
+ * its search slot on the explicit grounds that "Home opens with a full-width
+ * search field", so this one line was the whole of mobile's access to global
+ * search — and it pointed somewhere else. People search was unreachable on a
+ * phone as a direct consequence.
+ *
+ * Explore is still one tap away in the navigation and keeps its own field for
+ * filtering the feed. This button is the one that finds things.
+ */
 function goSearch() {
-  router.push({ name: 'explore', query: search.value ? { q: search.value } : {} })
+  router.push({ name: 'search', query: search.value ? { q: search.value } : {} })
 }
 
 onMounted(load)

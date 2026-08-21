@@ -9,6 +9,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import AppButton from '@/components/ui/AppButton.vue'
+import ActivitiesTabs from '@/components/activity/ActivitiesTabs.vue'
 import LocationFilterChips, { type LocationScope } from '@/components/explore/LocationFilterChips.vue'
 import ExploreFilterSheet, { type ExploreFilters } from '@/components/explore/ExploreFilterSheet.vue'
 import { activitiesApi, type ActivityFilters } from '@/api/activities'
@@ -250,8 +251,10 @@ onMounted(async () => {
       <h1 class="text-lg font-bold text-ink truncate">Faoliyatlar</h1>
     </template>
 
-    <div class="px-4 md:px-8 pt-6 md:pt-8 pb-4">
+    <div class="px-4 md:px-8 pt-4 md:pt-8 pb-4">
       <h1 class="hidden tablet:block text-xl font-bold text-ink mb-4">Faoliyatlar</h1>
+
+      <ActivitiesTabs class="mb-4" />
 
       <div class="flex items-center gap-2.5 mb-4">
         <AppSearchInput

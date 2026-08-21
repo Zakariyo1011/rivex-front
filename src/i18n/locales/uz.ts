@@ -3,6 +3,8 @@ export default {
     home: 'Bosh sahifa',
     search: 'Qidiruv',
     explore: 'Faoliyatlar',
+    discover: 'Kashf etish',
+    myActivities: 'Faoliyatlarim',
     applications: 'Arizalar',
     chats: 'Suhbatlar',
     profile: 'Profil',

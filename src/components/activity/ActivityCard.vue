@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import Rating from '@/components/ui/Rating.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import { activityStatus } from '@/lib/statusLabels'
 import { categoryIcon, icons } from '@/lib/icons'
 import { formatActivityStart, formatMoney, formatNumber } from '@/lib/datetime'
 import type { Activity } from '@/types'
@@ -55,6 +57,24 @@ const distanceLabel = computed(() => {
 
 const startLabel = computed(() => formatActivityStart(props.activity.start_at))
 
+/**
+ * Whether this card should say what state the activity is in.
+ *
+ * 🔴 It never did. `ActivityRow` — the list row on My Activities — has carried a
+ * status badge since it was written, but this card, which is what Home, Explore
+ * and every grid render, had none at all. A completed or cancelled activity was
+ * pixel-identical to one still open, which is the "completed does not show"
+ * complaint: it does show, on one of the two components that render an
+ * activity.
+ *
+ * `published` is the ordinary case and stays unlabelled — a badge on every card
+ * in Explore would be noise that teaches people to stop reading badges.
+ */
+const showStatus = computed(() => props.activity.status !== 'published')
+
+/** Present only when the search was geo-anchored, and honest about precision. */
+const distancePrefix = computed(() => (props.activity.distance_approximate ? '~' : ''))
+
 function open() {
   router.push({ name: 'activity-detail', params: { id: props.activity.id } })
 }
@@ -76,6 +96,13 @@ function open() {
       </span>
     </div>
     <p class="font-semibold text-sm text-ink truncate">{{ activity.title }}</p>
+    <StatusBadge
+      v-if="showStatus"
+      :status="activity.status"
+      :labels="activityStatus.labels"
+      :variants="activityStatus.variants"
+      class="mt-1"
+    />
     <p class="text-xs text-ink-faint mt-0.5">{{ startLabel }}</p>
     <p class="text-xs text-ink-faint">{{ activity.people_needed }} kishi kerak</p>
     <div class="flex items-center gap-1.5 mt-2">
@@ -116,16 +143,24 @@ function open() {
             class="flex items-center gap-1 text-primary-600 font-medium shrink-0"
           >
             <FontAwesomeIcon :icon="icons.locateMe" class="text-[10px]" />
-            {{ distanceLabel }}
+            {{ distancePrefix }}{{ distanceLabel }}
           </span>
         </p>
       </div>
-      <span
-        class="shrink-0 text-[11px] font-semibold bg-primary-50 text-primary-700 px-2.5 py-1 rounded-full flex items-center gap-1"
-      >
-        <FontAwesomeIcon :icon="icons.people" class="text-[10px]" />
-        {{ activity.people_needed }} kishi
-      </span>
+      <div class="shrink-0 flex flex-col items-end gap-1.5">
+        <StatusBadge
+          v-if="showStatus"
+          :status="activity.status"
+          :labels="activityStatus.labels"
+          :variants="activityStatus.variants"
+        />
+        <span
+          class="text-[11px] font-semibold bg-primary-50 text-primary-700 px-2.5 py-1 rounded-full flex items-center gap-1"
+        >
+          <FontAwesomeIcon :icon="icons.people" class="text-[10px]" />
+          {{ activity.people_needed }} kishi
+        </span>
+      </div>
     </div>
 
     <div

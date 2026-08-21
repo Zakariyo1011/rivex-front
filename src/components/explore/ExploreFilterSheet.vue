@@ -20,7 +20,22 @@ export interface ExploreFilters {
   sort: ActivitySort
 }
 
-const props = defineProps<{ filters: ExploreFilters; regions: Region[] }>()
+const props = withDefaults(
+  defineProps<{
+    filters: ExploreFilters
+    regions: Region[]
+    /**
+     * Whether to offer the sort control.
+     *
+     * Explore sorts by whatever is asked for. Search sorts by relevance, and
+     * the search endpoint deliberately does not accept a sort — offering the
+     * control there would be a row of buttons that changed nothing, which is
+     * worse than not having it.
+     */
+    showSort?: boolean
+  }>(),
+  { showSort: true },
+)
 
 /**
  * `apply` hands back a plain snapshot and the parent MERGES it into its own
@@ -198,7 +213,7 @@ function reset() {
         </label>
       </section>
 
-      <section>
+      <section v-if="showSort">
         <p class="text-sm font-semibold text-ink mb-2.5">Saralash</p>
         <div class="flex flex-wrap gap-2">
           <FilterChip

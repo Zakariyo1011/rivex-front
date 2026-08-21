@@ -34,6 +34,14 @@ export interface User {
    * account renders as somebody who simply never filled anything in.
    */
   is_restricted?: boolean
+  /**
+   * Present only where the server resolved presence — the conversation
+   * payloads. Absent everywhere else, which is why it is optional rather than
+   * defaulted to false: "not online" and "nobody asked" must render
+   * differently, and a grey dot on every embedded user would be the second one
+   * pretending to be the first.
+   */
+  is_online?: boolean
   rating_average?: number | null
   reviews_count?: number
   no_show_count?: number
@@ -109,6 +117,21 @@ export interface Activity {
   start_at: string
   duration_minutes: number | null
   people_needed: number
+  /** Seats taken. Present on the detail endpoint. */
+  accepted_participants_count?: number
+  /**
+   * How far the two-sided completion confirmation has got. Present on the
+   * detail endpoint while the activity can still be completed, and absent once
+   * it is — there is nothing left to confirm.
+   */
+  completion_progress?: {
+    confirmed: number
+    total: number
+    /** Display names of everyone whose confirmation is still owed. */
+    waiting_on: string[]
+  } | null
+  /** Owner-only, and only on the "my activities" endpoint. */
+  pending_applications_count?: number
   payment_type: PaymentType
   amount: number
   status: ActivityStatus
@@ -126,6 +149,12 @@ export interface Activity {
    */
   my_reviewable_users?: User[]
   distance_km?: number
+  /**
+   * Whether `distance_km` was measured from the activity's own pin or inferred
+   * from the centre of its district or region. Rendering a derived figure as if
+   * it were measured is a more confident lie than showing a "~".
+   */
+  distance_approximate?: boolean
   owner: User
   created_at: string
 }
@@ -184,10 +213,18 @@ export interface Conversation {
   counterpart: User | null
   activity: Activity | null
   participants?: User[]
+  /** The whole room, not `participants.length` — the face pile shows a slice. */
+  participants_count?: number
   last_message?: Message | null
   last_message_at: string | null
   unread_count: number
   created_at: string
+}
+
+/** Counts the navigation badges read. Delivered beside `/me`. */
+export interface UserCounters {
+  /** Applications awaiting a decision on activities this user organises. */
+  pending_applications: number
 }
 
 export interface AppNotification {
@@ -198,6 +235,18 @@ export interface AppNotification {
   data: Record<string, unknown>
   read: boolean
   created_at: string
+  /**
+   * The person behind the notification, resolved live rather than stored in
+   * `data` — an avatar written into the payload is the avatar from whenever the
+   * event happened. Null when there is no actor, or when the viewer may no
+   * longer see them.
+   */
+  actor?: User | null
+  /**
+   * The viewer's follow relationship with `actor`, on social rows only, so the
+   * row can carry a working Follow button without a request per notification.
+   */
+  relationship?: FollowRelationship | null
 }
 
 export type NotificationCategoryKey =

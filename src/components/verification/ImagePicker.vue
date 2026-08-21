@@ -7,17 +7,39 @@ const props = withDefaults(
     modelValue: File | null
     label: string
     hint?: string
-    /** `environment` = rear camera (documents), `user` = front camera (selfie). */
-    capture?: 'environment' | 'user'
+    /**
+     * `environment` = rear camera (documents), `user` = front camera (selfie),
+     * `null` = no camera hint, so the OS offers the gallery first. A cover
+     * photo is usually one the organiser already has.
+     */
+    capture?: 'environment' | 'user' | null
+    /**
+     * MIME types this particular upload accepts, defaulting to the KYC set.
+     *
+     * Passed in rather than fixed because the two endpoints behind this
+     * component genuinely differ: identity documents take HEIC at 8 MB,
+     * activity covers take four web formats at 4 MB. Hard-coding the looser
+     * pair here would let somebody pick a photo the server then refuses, which
+     * is the failure this component exists to prevent.
+     */
+    acceptedTypes?: string[]
+    maxBytes?: number
+    /** What the empty state offers to do. */
+    emptyLabel?: string
   }>(),
-  { capture: 'environment' },
+  {
+    capture: 'environment',
+    acceptedTypes: () => ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'],
+    maxBytes: 8 * 1024 * 1024,
+    emptyLabel: 'Rasm tanlash',
+  },
 )
 
 const emit = defineEmits<{ 'update:modelValue': [file: File | null] }>()
 
 /** Mirrors the backend rules so the user hears about a bad file immediately. */
-const ACCEPTED = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']
-const MAX_BYTES = 8 * 1024 * 1024
+const acceptAttribute = computed(() => props.acceptedTypes.join(','))
+const maxLabel = computed(() => `${Math.round(props.maxBytes / 1024 / 1024)} MB`)
 
 const input = ref<HTMLInputElement | null>(null)
 const previewUrl = ref<string | null>(null)
@@ -54,14 +76,16 @@ function onPick(event: Event) {
 
   if (!file) return
 
-  if (!ACCEPTED.includes(file.type)) {
-    error.value = 'Faqat JPG, PNG, WEBP yoki HEIC rasm yuklash mumkin.'
+  if (!props.acceptedTypes.includes(file.type)) {
+    error.value = `Bu format qo'llab-quvvatlanmaydi. Ruxsat etilgan: ${props.acceptedTypes
+      .map((type) => type.replace('image/', '').toUpperCase())
+      .join(', ')}.`
     clear()
     return
   }
 
-  if (file.size > MAX_BYTES) {
-    error.value = "Rasm hajmi 8 MB dan katta bo'lmasligi kerak."
+  if (file.size > props.maxBytes) {
+    error.value = `Rasm hajmi ${maxLabel.value} dan katta bo'lmasligi kerak.`
     clear()
     return
   }
@@ -89,9 +113,14 @@ function clear() {
       </div>
       <div class="flex items-center justify-between gap-3 px-4 py-3 border-t border-border">
         <span class="text-xs text-ink-faint truncate">{{ modelValue.name }} · {{ sizeLabel }}</span>
-        <button type="button" class="text-sm font-medium text-primary-600 shrink-0" @click="input?.click()">
-          O'zgartirish
-        </button>
+        <span class="flex items-center gap-3 shrink-0">
+          <button type="button" class="text-sm font-medium text-primary-600" @click="input?.click()">
+            O'zgartirish
+          </button>
+          <button type="button" class="text-sm font-medium text-ink-muted hover:text-danger" @click="clear">
+            O'chirish
+          </button>
+        </span>
       </div>
     </div>
 
@@ -102,17 +131,21 @@ function clear() {
       @click="input?.click()"
     >
       <span class="w-12 h-12 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center text-lg">
-        <FontAwesomeIcon :icon="capture === 'user' ? icons.camera : icons.identity" />
+        <!-- The glyph follows what is being asked for: a selfie, a document,
+             or (no camera hint) an image the person already has. -->
+        <FontAwesomeIcon
+          :icon="capture === 'user' ? icons.camera : capture === null ? icons.image : icons.identity"
+        />
       </span>
-      <span class="text-[15px] font-medium text-ink">Rasm tanlash</span>
+      <span class="text-[15px] font-medium text-ink">{{ emptyLabel }}</span>
       <span v-if="hint" class="text-xs text-ink-faint max-w-xs">{{ hint }}</span>
     </button>
 
     <input
       ref="input"
       type="file"
-      accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-      :capture="capture"
+      :accept="acceptAttribute"
+      :capture="capture ?? undefined"
       class="sr-only"
       @change="onPick"
     />

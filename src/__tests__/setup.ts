@@ -27,3 +27,10 @@ class NoopIntersectionObserver implements IntersectionObserver {
 }
 
 vi.stubGlobal('IntersectionObserver', NoopIntersectionObserver)
+
+// jsdom implements neither of these, and both are ordinary in a real browser.
+// Stubbed here rather than guarded at each call site: a `typeof x === 'function'`
+// check in a component is a test-environment detail leaking into product code.
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}

@@ -59,8 +59,13 @@ export const activitiesApi = {
   show(id: number | string) {
     return client.get<{ data: Activity }>(`/activities/${id}`)
   },
-  mine() {
-    return client.get<{ data: Activity[] }>('/me/activities')
+  /**
+   * @param filter `owned` (the default, and what this endpoint always
+   *   returned), `joined` for other people's activities you took part in, or
+   *   `all` for both.
+   */
+  mine(filter: 'owned' | 'joined' | 'all' = 'owned') {
+    return client.get<{ data: Activity[] }>('/me/activities', { params: { filter } })
   },
   create(payload: CreateActivityPayload) {
     return client.post<{ data: Activity }>('/activities', toFormData(payload))

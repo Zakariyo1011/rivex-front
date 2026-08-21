@@ -8,11 +8,9 @@ import Skeleton from '@/components/ui/Skeleton.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ProfileSections from '@/components/profile/ProfileSections.vue'
 import SectionEditor from '@/components/profile/SectionEditor.vue'
-import UsernameEditor from '@/components/profile/UsernameEditor.vue'
 import { useProfileSectionsStore } from '@/stores/profileSections'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
-import { useHashScroll } from '@/composables/useHashScroll'
 import { extractErrorMessage } from '@/composables/useApiError'
 import { profileApi } from '@/api/profile'
 import { locationsApi } from '@/api/locations'
@@ -25,7 +23,6 @@ import type { Visibility } from '@/api/privacy'
 const store = useProfileSectionsStore()
 const auth = useAuthStore()
 const toast = useToast()
-const { scrollToHash } = useHashScroll()
 
 /**
  * The basic profile fields.
@@ -215,10 +212,6 @@ onMounted(async () => {
   } catch {
     regions.value = []
   }
-
-  // Settings → Account → "Foydalanuvchi nomi" links to #username, and the card
-  // only exists now that the data behind this screen has arrived.
-  void scrollToHash()
 })
 </script>
 
@@ -294,11 +287,24 @@ onMounted(async () => {
         </div>
       </AppCard>
 
-      <!-- The handle. Its own card, on the edit screen, rather than something
-           you reach by tapping your own name on the profile page. The rules
-           behind it — cooldown, quarantine, availability — are unchanged and
-           still live entirely in UsernameService. -->
-      <UsernameEditor />
+      <!-- The handle is NOT here. It moved to /settings/account/username.
+           Bio and avatar are decoration and can be changed as often as you
+           like; a handle is the account's identifier, is quarantined for thirty
+           days when released and can only be changed on a cooldown. Filing it
+           beside the avatar invited people to treat it as another field, which
+           is how "edit your profile" became "rename your account". -->
+      <RouterLink
+        :to="{ name: 'username-settings' }"
+        class="card card-hover p-4 mb-4 flex items-center justify-between"
+      >
+        <span class="min-w-0">
+          <span class="block text-sm font-medium text-ink">Foydalanuvchi nomi</span>
+          <span class="block text-xs text-ink-muted truncate">
+            {{ auth.user?.username ? `@${auth.user.username}` : 'Hali tanlanmagan' }}
+          </span>
+        </span>
+        <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs shrink-0" />
+      </RouterLink>
 
       <!-- Region and district: structured location, separate from the free-text
            `location_name` above because search filters on this one. -->

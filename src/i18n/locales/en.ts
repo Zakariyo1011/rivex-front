@@ -3,6 +3,8 @@ export default {
     home: 'Home',
     search: 'Search',
     explore: 'Explore',
+    discover: 'Discover',
+    myActivities: 'My activities',
     applications: 'Applications',
     chats: 'Chats',
     profile: 'Profile',

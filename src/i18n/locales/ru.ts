@@ -3,6 +3,8 @@ export default {
     home: 'Главная',
     search: 'Поиск',
     explore: 'Активности',
+    discover: 'Обзор',
+    myActivities: 'Мои активности',
     applications: 'Заявки',
     chats: 'Чаты',
     profile: 'Профиль',

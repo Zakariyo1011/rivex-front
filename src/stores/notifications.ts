@@ -4,6 +4,7 @@ import { notificationsApi } from '@/api/notifications'
 import { useEchoChannel } from '@/composables/useEchoChannel'
 import { onEchoReconnect } from '@/composables/useEcho'
 import { useToast } from '@/composables/useToast'
+import { useChatStore } from '@/stores/chat'
 import type { AppNotification } from '@/types'
 
 /**
@@ -170,6 +171,19 @@ export const useNotificationsStore = defineStore('notifications', () => {
       Number(payload.conversation_id) === activeConversationId.value
     ) {
       return
+    }
+
+    // The chat badge rides on this same frame.
+    //
+    // `App.Models.User.{id}` is the only channel a client holds open from every
+    // screen, so it is the only place the chat count can learn about a message
+    // arriving while the user is somewhere other than that conversation. The
+    // chat store owns the guard against double-counting — see
+    // `noteMessageNotification` — and this deliberately does not duplicate it:
+    // two copies of "is this thread open" is how a badge starts disagreeing
+    // with the screen it points at.
+    if (payload.type === 'new_message') {
+      useChatStore().noteMessageNotification(Number(payload.conversation_id))
     }
 
     const notification: AppNotification = {

@@ -1,4 +1,5 @@
 import client from './client'
+import type { ActivityFilters } from './activities'
 import type { Activity, Category, FollowRelationship, User } from '@/types'
 
 export type SearchTypeKey = 'all' | 'users' | 'activities' | 'categories'
@@ -64,9 +65,17 @@ export const searchApi = {
   users(q: string, page = 1) {
     return client.get<SearchPage<User>>('/search', { params: { q, type: 'users', page } })
   },
-  activities(q: string, page = 1) {
+  /**
+   * @param filters the same set Explore applies, and applied by the same code
+   *   server-side. A results page that offered no filters while Explore offered
+   *   eight is why people abandoned a search to start again on the other
+   *   screen. `sort` is deliberately not among them — search orders by
+   *   relevance, and a sort control that relevance then overrode would be a
+   *   control that lies.
+   */
+  activities(q: string, page = 1, filters: ActivityFilters = {}) {
     return client.get<SearchPage<Activity>>('/search', {
-      params: { q, type: 'activities', page },
+      params: { ...filters, q, type: 'activities', page },
     })
   },
   categories(q: string, page = 1) {

@@ -23,7 +23,7 @@ test.describe.serial('critical journey', () => {
   let tokenB: string
 
   let activityId: number
-  let matchId: number
+  let conversationId: number
 
   test.beforeAll(async ({ browser }) => {
     contextA = await browser.newContext()
@@ -73,7 +73,7 @@ test.describe.serial('critical journey', () => {
     await expect(pageA.getByText('E2E PS5 FIFA')).toBeVisible()
   })
 
-  test('B applies and A accepts, creating a match', async () => {
+  test('B applies and A accepts, opening a conversation', async () => {
     const application = await api<{ data: { id: number } }>(
       pageB,
       tokenB,
@@ -83,19 +83,23 @@ test.describe.serial('critical journey', () => {
 
     await api(pageA, tokenA, `/applications/${application.data.id}/accept`, { method: 'POST' })
 
-    const matches = await api<{ data: { id: number; activity: { id: number } }[] }>(
+    // `/me/matches` until 11.9, which removed match-based chat entirely.
+    // The activity resolves its own conversation now — and a two-person
+    // activity resolves to the pair's *direct* thread, which is exactly why
+    // the client has to ask rather than derive it.
+    const conversation = await api<{ data: { id: number } }>(
       pageA,
       tokenA,
-      '/me/matches',
+      `/activities/${activityId}/conversation`,
     )
-    matchId = matches.data.find((m) => m.activity.id === activityId)!.id
+    conversationId = conversation.data.id
 
-    expect(matchId).toBeTruthy()
+    expect(conversationId).toBeTruthy()
   })
 
   test('a chat message reaches the other user without a reload', async () => {
-    await pageA.goto(`/chats/${matchId}`)
-    await pageB.goto(`/chats/${matchId}`)
+    await pageA.goto(`/chats/${conversationId}`)
+    await pageB.goto(`/chats/${conversationId}`)
 
     // Presence proves both sockets are actually connected and authorised.
     await expect(pageA.getByText('Onlayn').first()).toBeVisible()

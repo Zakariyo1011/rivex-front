@@ -117,6 +117,34 @@ const iHaveConfirmedCompletion = computed(() =>
     : !!activity.value?.my_participation_confirmed_at,
 )
 
+const completionProgress = computed(() => activity.value?.completion_progress ?? null)
+
+/**
+ * The activity has finished, one way or another.
+ *
+ * 🔴 Nothing on this page said so. `completion_progress` is present only while
+ * an activity can *still* be completed, so the moment it actually completed the
+ * whole confirmation panel disappeared and the page fell through to a grey
+ * "applications are not being accepted" box — the same box a full activity
+ * shows. The status badge at the top said "Yakunlangan" in six-point type and
+ * that was the entire signal that a meet-up everybody had just confirmed was
+ * done.
+ */
+const isCompleted = computed(() => activity.value?.status === 'completed')
+
+const isFinished = computed(() =>
+  ['completed', 'cancelled', 'expired'].includes(activity.value?.status ?? ''),
+)
+
+/** Who still owes a confirmation, as a readable list. */
+const waitingOn = computed(() => {
+  const names = completionProgress.value?.waiting_on ?? []
+
+  return names.length ? names.join(', ') : null
+})
+
+const showCompleteModal = ref(false)
+
 const canConfirmCompletion = computed(
   () =>
     !!activity.value &&
@@ -195,6 +223,7 @@ function onCancelled(updated: Activity) {
 
 async function confirmCompletion() {
   if (!activity.value) return
+  showCompleteModal.value = false
   error.value = ''
   confirming.value = true
   try {
@@ -252,7 +281,17 @@ const cancellationLabel = computed(
 useEchoChannel(() => (activity.value ? `activity.${activity.value.id}` : null), {
   listeners: {
     '.ActivityStatusChanged': (payload: { status: ActivityStatus }) => {
-      if (activity.value) activity.value.status = payload.status
+      if (!activity.value) return
+
+      const wasLive = !['completed', 'cancelled', 'expired'].includes(activity.value.status)
+
+      activity.value.status = payload.status
+
+      // Reaching a final state changes more than one field: the confirmation
+      // progress goes away, the review prompt appears, and the participant
+      // roster is settled. Patching `status` alone left the page insisting
+      // somebody still owed a confirmation on an activity that had completed.
+      if (wasLive && ['completed', 'expired'].includes(payload.status)) void load()
     },
     '.ActivityCancelled': (payload: {
       status: ActivityStatus
@@ -450,6 +489,18 @@ onMounted(load)
               >
                 Arizalarni ko'rish
               </AppButton>
+              <!-- Editing exists now. The endpoint always did; nothing in the
+                   client called it, so a mistyped time meant cancelling and
+                   starting again. Hidden on a finalised activity because
+                   ActivityPolicy::update refuses those. -->
+              <AppButton
+                v-if="!['cancelled', 'completed', 'expired'].includes(activity.status)"
+                variant="outline"
+                :icon="icons.edit"
+                @click="router.push({ name: 'activity-edit', params: { id: activity.id } })"
+              >
+                Tahrirlash
+              </AppButton>
               <AppButton
                 v-if="!['cancelled', 'completed', 'expired'].includes(activity.status)"
                 variant="ghost"
@@ -479,7 +530,10 @@ onMounted(load)
           <template v-else-if="activity.status === 'published'">
             <AppButton @click="showApplyModal = true">Ariza yuborish</AppButton>
           </template>
-          <template v-else>
+          <!-- Only for an activity that is live but closed to new people —
+               `full` or `in_progress`. A finished one gets the panel below,
+               which says what happened instead of only what cannot happen. -->
+          <template v-else-if="!isFinished">
             <div
               class="h-12 rounded-xl bg-surface-muted text-ink-muted font-semibold flex items-center justify-center"
             >
@@ -504,17 +558,70 @@ onMounted(load)
               variant="outline"
               :icon="icons.completedFlag"
               :loading="confirming"
-              @click="confirmCompletion"
+              @click="showCompleteModal = true"
             >
               Faoliyat tugadimi? Tasdiqlash
             </AppButton>
+
+            <!-- What "waiting for the other side" actually means.
+                 Completion needs everybody, which is deliberate — one person
+                 should not record a shared outcome for the rest. But the rule
+                 used to be invisible: you pressed confirm, nothing appeared to
+                 change, and the screen said only that somebody else was owed.
+                 Now it says how many, who, and when it resolves itself. -->
             <div
               v-else-if="iHaveConfirmedCompletion"
-              class="h-12 rounded-xl bg-surface-muted text-ink-muted text-sm font-medium flex items-center justify-center"
+              class="rounded-xl bg-surface-muted p-3.5 text-sm"
             >
-              Siz tasdiqladingiz — boshqa tomon kutilmoqda
+              <p class="font-medium text-ink flex items-center gap-2">
+                <FontAwesomeIcon :icon="icons.check" class="text-success text-xs" />
+                Siz tasdiqladingiz
+                <span v-if="completionProgress" class="text-ink-muted font-normal">
+                  · {{ completionProgress.confirmed }}/{{ completionProgress.total }}
+                </span>
+              </p>
+
+              <p v-if="waitingOn" class="text-ink-muted mt-1">
+                Kutilmoqda: {{ waitingOn }}
+              </p>
+
+              <p class="text-xs text-ink-faint mt-1.5">
+                Hamma tasdiqlagach yakunlanadi. Javob bo'lmasa, 48 soatdan keyin
+                avtomatik yakunlanadi.
+              </p>
             </div>
           </template>
+
+          <!-- Finished, and said so plainly.
+               The confirmation panel above only exists while an activity can
+               still be completed, so the instant it completed this area went
+               blank and the page read as though nothing had happened. This is
+               the outcome, stated where the action used to be. -->
+          <div
+            v-if="isCompleted"
+            class="rounded-xl bg-success-bg text-success px-4 py-3.5 flex items-start gap-3"
+          >
+            <FontAwesomeIcon :icon="icons.completedFlag" class="mt-0.5 shrink-0" />
+            <div class="min-w-0">
+              <p class="font-semibold">Faoliyat yakunlandi</p>
+              <p class="text-sm opacity-90 mt-0.5">
+                Hamma tasdiqladi. Endi bir-biringizga baho qoldirishingiz mumkin.
+              </p>
+            </div>
+          </div>
+
+          <div
+            v-else-if="activity.status === 'expired'"
+            class="rounded-xl bg-surface-muted text-ink-muted px-4 py-3.5 flex items-start gap-3"
+          >
+            <FontAwesomeIcon :icon="icons.time" class="mt-0.5 shrink-0" />
+            <div class="min-w-0">
+              <p class="font-semibold text-ink">Muddati o'tgan</p>
+              <p class="text-sm mt-0.5">
+                Boshlanish vaqti o'tdi va hech kim qo'shilmadi.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -547,6 +654,25 @@ onMounted(load)
         </div>
       </div>
     </div>
+
+    <!-- Confirming is not undoable and it is a statement about other people's
+         time, so it is asked for rather than taken from a single tap. -->
+    <AppModal
+      v-if="showCompleteModal"
+      title="Faoliyatni yakunlamoqchimisiz?"
+      @close="showCompleteModal = false"
+    >
+      <p class="text-sm text-ink-secondary">
+        Siz bu faoliyat bo'lib o'tganini tasdiqlaysiz. Hamma ishtirokchi
+        tasdiqlagach faoliyat yakunlanadi va bir-biringizga baho qoldira olasiz.
+      </p>
+      <p class="text-sm text-ink-muted mt-2">Buni keyin bekor qilib bo'lmaydi.</p>
+
+      <div class="flex gap-3 mt-4">
+        <AppButton :loading="confirming" @click="confirmCompletion">Ha, tasdiqlayman</AppButton>
+        <AppButton variant="outline" @click="showCompleteModal = false">Bekor qilish</AppButton>
+      </div>
+    </AppModal>
 
     <CancelActivityModal
       v-if="showCancelModal && activity"

@@ -1,9 +1,15 @@
 import client from './client'
 import type { FollowRelationship, PaginatedResponse, User } from '@/types'
 
-/** A person in a follow list, carrying the viewer's tie to them. */
+/**
+ * A person in a follow list, carrying the viewer's tie to them.
+ *
+ * The full relationship, not the three edge fields it used to be: without
+ * `can_follow` the client had to guess at it, and guessing at an authorization
+ * answer meant offering a Follow button that the server then refused.
+ */
 export interface FollowListUser extends User {
-  relationship?: Pick<FollowRelationship, 'is_following' | 'follow_status' | 'is_followed_by'>
+  relationship?: FollowRelationship
 }
 
 export const followsApi = {

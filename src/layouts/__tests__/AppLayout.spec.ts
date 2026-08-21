@@ -1,8 +1,22 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createRouter, createWebHistory } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import { h } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue'
+
+/**
+ * A real router, because the layout now renders a `RouterLink` and reads the
+ * current route name to decide whether the search button is useful. A stub
+ * would let a broken destination pass.
+ */
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/', name: 'home', component: { template: '<div />' } },
+    { path: '/search', name: 'search', component: { template: '<div />' } },
+  ],
+})
 
 vi.mock('@/stores/notifications', () => ({
   useNotificationsStore: () => ({ subscribe: vi.fn(), unreadCount: 0 }),
@@ -22,13 +36,19 @@ vi.mock('@/stores/notifications', () => ({
  * of its own controls, which is exactly what happened before.
  */
 describe('AppLayout', () => {
-  beforeEach(() => setActivePinia(createPinia()))
+  beforeEach(async () => {
+    setActivePinia(createPinia())
+    await router.push('/')
+    await router.isReady()
+  })
 
   function mountLayout(slots: Record<string, unknown> = {}) {
     return mount(AppLayout, {
       slots: slots as never,
       global: {
+        plugins: [router],
         stubs: {
+          FontAwesomeIcon: { template: '<i />' },
           Sidebar: { template: '<aside />' },
           BottomNav: { template: '<nav />' },
           NotificationBell: { name: 'NotificationBell', template: '<button data-bell />' },
@@ -72,5 +92,50 @@ describe('AppLayout', () => {
 
   it('always renders the default slot', () => {
     expect(mountLayout({ default: () => h('div', 'page body') }).text()).toContain('page body')
+  })
+
+  /**
+   * Mobile's way into global search.
+   *
+   * The bottom bar has four slots and gave search's up, on the stated grounds
+   * that Home carries a search field — but Home's field routed to Explore,
+   * which browses activities and cannot find a person. Global search was
+   * therefore unreachable on a phone. This button is the replacement, so it has
+   * to be here and it has to point at the search route.
+   */
+  it('offers a way into search from any screen with a header', () => {
+    const wrapper = mountLayout({
+      header: () => h('h1', 'Rivex'),
+      default: () => h('div', 'body'),
+    })
+
+    const link = wrapper.find('a[aria-label="Qidiruv"]')
+
+    expect(link.exists()).toBe(true)
+    expect(link.attributes('href')).toBe('/search')
+  })
+
+  it('keeps the search button in the mobile-only bar', () => {
+    const wrapper = mountLayout({
+      header: () => h('h1', 'Rivex'),
+      default: () => h('div', 'body'),
+    })
+
+    // Desktop reaches search through the sidebar; two visible entry points on
+    // one screen would be a duplicate rather than parity.
+    expect(
+      wrapper.find('a[aria-label="Qidiruv"]').element.closest('.tablet\\:hidden'),
+    ).not.toBeNull()
+  })
+
+  it('does not offer search on the search screen itself', async () => {
+    await router.push('/search')
+
+    const wrapper = mountLayout({
+      header: () => h('h1', 'Qidiruv'),
+      default: () => h('div', 'body'),
+    })
+
+    expect(wrapper.find('a[aria-label="Qidiruv"]').exists()).toBe(false)
   })
 })

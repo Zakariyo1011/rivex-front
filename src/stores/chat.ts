@@ -276,6 +276,80 @@ export const useChatStore = defineStore('chat', () => {
     totalUnread.value += 1
   }
 
+  /**
+   * The chat badge, kept true while the user is anywhere else in the app.
+   *
+   * ## The problem this solves
+   *
+   * `receive()` above only ever runs for the conversation that is *open*: the
+   * `conversation.{id}` channel is subscribed by ConversationView and left
+   * behind on navigation, which is correct — the alternative is a subscription
+   * per conversation. So while the user is on Home, or an activity, or their
+   * profile, nothing on the client heard about a new message at all, and the
+   * badge showed whatever `loadList()` last saw. The count on the tab pointing
+   * at chat was stale until you visited chat, which is the one screen that
+   * makes the badge unnecessary.
+   *
+   * The message notification, on the other hand, arrives on
+   * `App.Models.User.{id}` — a channel every signed-in client already holds
+   * open. That is the wire this reads.
+   *
+   * ## Why this cannot double-count
+   *
+   * When a conversation *is* open both wires deliver the same message: the
+   * conversation channel and the notification channel. Exactly one of them may
+   * touch the count, so this is the single guard for both — an open thread is
+   * read as it arrives, and `receive()` marks it read rather than counting it.
+   * The notification store applies the same test before it renders a bell row;
+   * the two agree because they ask the same question of the same store.
+   */
+  function noteMessageNotification(conversationId: number) {
+    if (!Number.isFinite(conversationId)) return
+
+    // Already looking at it — `receive()` has this, and marks it read.
+    if (active.value?.id === conversationId) return
+
+    const known = conversations.value.find((c) => c.id === conversationId)
+
+    if (!known) {
+      // A thread not in the loaded list: somebody writing for the first time.
+      // If the list has never been loaded there is nothing to add a row to, so
+      // move the total on its own — it is what the badge reads — and let the
+      // next visit to the list fill in the detail.
+      if (listLoaded.value) {
+        void loadList()
+      } else {
+        totalUnread.value += 1
+      }
+
+      return
+    }
+
+    bumpUnread(conversationId)
+  }
+
+  /**
+   * Read the badge from the server without loading the whole list.
+   *
+   * Called once when the shell mounts, so the count is right on the first
+   * screen the user sees rather than only after they open chat. A dedicated
+   * endpoint would be a third thing to keep in step with `unreadCountsFor`;
+   * the list already answers this and the answer is in its meta.
+   */
+  async function loadUnreadBadge() {
+    if (listLoaded.value) return
+
+    try {
+      const { data } = await conversationsApi.list()
+      conversations.value = data.data
+      totalUnread.value = data.meta?.total_unread ?? 0
+      listLoaded.value = true
+    } catch {
+      // A wrong badge is worse than no badge, so leave it at zero and let the
+      // chat list retry with its own error state.
+    }
+  }
+
   /** Move a conversation to the top of the list and update its preview. */
   function touch(id: number, message: Message) {
     const conversation = conversations.value.find((c) => c.id === id)
@@ -322,6 +396,8 @@ export const useChatStore = defineStore('chat', () => {
     receive,
     applyReadReceipt,
     markRead,
+    noteMessageNotification,
+    loadUnreadBadge,
     reset,
   }
 })

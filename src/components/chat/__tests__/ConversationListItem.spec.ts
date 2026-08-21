@@ -128,4 +128,100 @@ describe('ConversationListItem', () => {
       params: { conversationId: 42 },
     })
   })
+
+  // -- online status --------------------------------------------------------
+
+  /**
+   * The dot is rendered from `is_online`, which the server resolves behind the
+   * `show_online_status` gate. The row decides nothing — a client-side rule
+   * here would be a second privacy authority.
+   */
+  it('shows an online dot when the server says the person is online', () => {
+    const wrapper = mountRow(
+      makeConversation({ counterpart: { ...makeUser(2, 'Jasur'), is_online: true } }),
+    )
+
+    expect(wrapper.find('[data-testid="online-dot"]').exists()).toBe(true)
+  })
+
+  it('shows no dot when the person is offline', () => {
+    const wrapper = mountRow(
+      makeConversation({ counterpart: { ...makeUser(2, 'Jasur'), is_online: false } }),
+    )
+
+    expect(wrapper.find('[data-testid="online-dot"]').exists()).toBe(false)
+  })
+
+  /** Absent means "presence was never resolved", which is not "offline". */
+  it('shows no dot when presence is absent from the payload', () => {
+    expect(mountRow(makeConversation()).find('[data-testid="online-dot"]').exists()).toBe(false)
+  })
+
+  it('never shows an online dot on a group row', () => {
+    const wrapper = mountRow(
+      makeConversation({
+        type: 'activity',
+        counterpart: null,
+        activity: { id: 1, title: 'Yugurish' } as never,
+        participants: [makeUser(2, 'Jasur')],
+        participants_count: 2,
+      }),
+    )
+
+    expect(wrapper.find('[data-testid="online-dot"]').exists()).toBe(false)
+  })
+
+  // -- handle ----------------------------------------------------------------
+
+  it('shows the handle beside the display name', () => {
+    expect(mountRow(makeConversation()).text()).toContain('@jasur')
+  })
+
+  /** Not twice. An account with no display name titles the row with the handle. */
+  it('does not repeat the handle when it is already the title', () => {
+    const person = { ...makeUser(2, 'Jasur'), display_name: '@jasur', name: '@jasur' }
+    const text = mountRow(makeConversation({ counterpart: person as never })).text()
+
+    expect(text.match(/@jasur/g)).toHaveLength(1)
+  })
+
+  it('copes with an account that has no handle yet', () => {
+    const person = { ...makeUser(2, 'Jasur'), username: null }
+
+    expect(() => mountRow(makeConversation({ counterpart: person as never }))).not.toThrow()
+    expect(mountRow(makeConversation({ counterpart: person as never })).text()).not.toContain('@null')
+  })
+
+  // -- group rows ------------------------------------------------------------
+
+  it('shows a face pile and the real member count for a group', () => {
+    const wrapper = mountRow(
+      makeConversation({
+        type: 'activity',
+        counterpart: null,
+        activity: { id: 1, title: 'Yugurish' } as never,
+        participants: [makeUser(2, 'A'), makeUser(3, 'B'), makeUser(4, 'C'), makeUser(5, 'D')],
+        participants_count: 7,
+      }),
+    )
+
+    // Three faces, and the overflow counts against the whole room rather than
+    // against however many people the payload happened to carry.
+    expect(wrapper.findAllComponents({ name: 'Avatar' }).length).toBe(3)
+    expect(wrapper.text()).toContain('+4')
+    expect(wrapper.text()).toContain('7')
+  })
+
+  it('falls back to the group icon when no participants were loaded', () => {
+    const wrapper = mountRow(
+      makeConversation({
+        type: 'activity',
+        counterpart: null,
+        activity: { id: 1, title: 'Yugurish' } as never,
+      }),
+    )
+
+    expect(wrapper.findAllComponents({ name: 'Avatar' }).length).toBe(0)
+    expect(wrapper.text()).toContain('Yugurish')
+  })
 })

@@ -14,6 +14,11 @@ vi.mock('@/api/notifications', () => ({
 }))
 
 vi.mock('@/composables/useEchoChannel', () => ({ useEchoChannel: vi.fn() }))
+
+const conversationsList = vi.fn()
+vi.mock('@/api/conversations', () => ({
+  conversationsApi: { list: (...args: unknown[]) => conversationsList(...args) },
+}))
 vi.mock('@/composables/useEcho', () => ({ onEchoReconnect: vi.fn(() => () => {}) }))
 
 const toastInfo = vi.fn()
@@ -22,6 +27,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 const { useNotificationsStore } = await import('@/stores/notifications')
+const { useChatStore } = await import('@/stores/chat')
 
 function page(items: { id: string; read?: boolean }[], meta: Partial<Record<string, number>> = {}) {
   return {
@@ -158,6 +164,100 @@ describe('notifications store', () => {
       store.handleIncoming({ id: 'race', type: 'x', title: 'T', body: 'B' })
 
       expect(store.notifications).toHaveLength(1)
+    })
+  })
+
+
+  /**
+   * The chat badge rides on the message notification.
+   *
+   * `App.Models.User.{id}` is the only channel a client holds open from every
+   * screen, so it is the only wire that can tell the chat count about a message
+   * arriving while the user is elsewhere. These pin the handoff — and, more
+   * importantly, that it happens exactly once.
+   */
+  describe('the chat badge handoff', () => {
+    it('raises the chat count when a message notification arrives', async () => {
+      list.mockResolvedValue(page([]))
+      conversationsList.mockResolvedValue({ data: { data: [], meta: { total_unread: 0 } } })
+
+      const store = useNotificationsStore()
+      const chat = useChatStore()
+      await store.fetch()
+
+      store.handleIncoming({
+        id: 'm1',
+        type: 'new_message',
+        title: 'Jasur',
+        body: 'salom',
+        conversation_id: 4,
+      })
+
+      expect(chat.totalUnread).toBe(1)
+    })
+
+    /**
+     * The conversation on screen is delivered by both wires. Exactly one of
+     * them may count it, and the open thread is read as it arrives — so
+     * neither the bell nor the chat badge moves.
+     */
+    it('counts nothing for the conversation already open', async () => {
+      list.mockResolvedValue(page([]))
+      conversationsList.mockResolvedValue({ data: { data: [], meta: { total_unread: 0 } } })
+
+      const store = useNotificationsStore()
+      const chat = useChatStore()
+      await store.fetch()
+
+      store.setActiveConversation(4)
+
+      store.handleIncoming({
+        id: 'm1',
+        type: 'new_message',
+        title: 'Jasur',
+        body: 'salom',
+        conversation_id: 4,
+      })
+
+      expect(chat.totalUnread).toBe(0)
+      expect(store.unreadCount).toBe(0)
+    })
+
+    it('leaves the chat count alone for notifications that are not messages', async () => {
+      list.mockResolvedValue(page([]))
+
+      const store = useNotificationsStore()
+      const chat = useChatStore()
+      await store.fetch()
+
+      store.handleIncoming({ id: 'f1', type: 'new_follower', title: 'X', body: 'Y' })
+
+      expect(chat.totalUnread).toBe(0)
+      expect(conversationsList).not.toHaveBeenCalled()
+    })
+
+    /** A redelivered frame must not count twice on either badge. */
+    it('does not count a redelivered frame twice', async () => {
+      list.mockResolvedValue(page([]))
+      conversationsList.mockResolvedValue({ data: { data: [], meta: { total_unread: 0 } } })
+
+      const store = useNotificationsStore()
+      const chat = useChatStore()
+      await store.fetch()
+
+      const frame = {
+        id: 'm1',
+        type: 'new_message',
+        title: 'Jasur',
+        body: 'salom',
+        conversation_id: 4,
+      }
+
+      store.handleIncoming(frame)
+      store.handleIncoming(frame)
+
+      expect(chat.totalUnread).toBe(1)
+      expect(store.unreadCount).toBe(1)
     })
   })
 

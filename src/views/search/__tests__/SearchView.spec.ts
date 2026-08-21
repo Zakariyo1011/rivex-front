@@ -20,7 +20,7 @@ vi.mock('@/api/search', async () => {
     searchApi: {
       overview: (q: string) => overview(q),
       users: (q: string, page: number) => users(q, page),
-      activities: (q: string, page: number) => activities(q, page),
+      activities: (q: string, page: number, filters?: unknown) => activities(q, page, filters),
       categories: (q: string, page: number) => categories(q, page),
       suggest: (q: string) => suggest(q),
     },
@@ -29,6 +29,10 @@ vi.mock('@/api/search', async () => {
 
 // The layout pulls in the whole app shell (nav, echo, notifications). The
 // screen under test does not need any of it.
+vi.mock('@/api/locations', () => ({
+  locationsApi: { regions: () => Promise.resolve({ data: { data: [] } }) },
+}))
+
 vi.mock('@/layouts/AppLayout.vue', () => ({
   default: defineComponent({ setup: (_, { slots }) => () => h('div', slots.default?.()) }),
 }))
@@ -249,6 +253,174 @@ describe('SearchView', () => {
 
     expect(users).toHaveBeenCalledWith('gaming', 1)
     expect(activities).not.toHaveBeenCalled()
+  })
+
+
+  // --- Mobile parity ------------------------------------------------------
+  //
+  // This screen is the only way to find a *person* in Rivex, and until 11.10 it
+  // had no mobile entry point: the bottom bar gave up its search slot on the
+  // stated grounds that Home carries a search field, and Home's field routed to
+  // Explore. The entry points are asserted in AppLayout's and HomeView's specs;
+  // what belongs here is that nothing on this screen is desktop-only.
+
+  it('offers filters on the activities tab and nowhere else', async () => {
+    activities.mockResolvedValue({
+      data: {
+        query: 'gaming',
+        type: 'activities',
+        data: [],
+        relationships: {},
+        meta: { current_page: 1, last_page: 1, per_page: 20, total: 0 },
+      },
+    })
+
+    const wrapper = await mountSearch()
+    await type(wrapper, 'gaming')
+
+    // Combined preview: no filter button, because `all` answers "which tab is
+    // worth opening" and filtering it would make that answer wrong.
+    expect(wrapper.find('button[aria-label="Filtrlar"]').exists()).toBe(false)
+
+    await wrapper
+      .findAll('button')
+      .filter((b) => b.text().startsWith('Faoliyatlar'))[0]!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('button[aria-label="Filtrlar"]').exists()).toBe(true)
+
+    // People have no date or price to filter by.
+    await wrapper
+      .findAll('button')
+      .filter((b) => b.text().startsWith('Odamlar'))[0]!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('button[aria-label="Filtrlar"]').exists()).toBe(false)
+  })
+
+  /**
+   * A results list that offered no filters while Explore offered eight is why
+   * people abandoned a search and started again on the other screen.
+   */
+  it('sends the chosen filters with an activity search', async () => {
+    activities.mockResolvedValue({
+      data: {
+        query: 'gaming',
+        type: 'activities',
+        data: [],
+        relationships: {},
+        meta: { current_page: 1, last_page: 1, per_page: 20, total: 0 },
+      },
+    })
+
+    const wrapper = await mountSearch()
+    await type(wrapper, 'gaming')
+
+    await wrapper
+      .findAll('button')
+      .filter((b) => b.text().startsWith('Faoliyatlar'))[0]!
+      .trigger('click')
+    await flushPromises()
+
+    await wrapper.find('button[aria-label="Filtrlar"]').trigger('click')
+    await flushPromises()
+
+    const free = document.querySelectorAll('button')
+    const freeButton = [...free].find((b) => b.textContent?.trim() === 'Bepul')!
+    freeButton.click()
+
+    const apply = [...document.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === "Qo'llash",
+    )!
+    apply.click()
+    await flushPromises()
+
+    expect(activities).toHaveBeenLastCalledWith(
+      'gaming',
+      1,
+      expect.objectContaining({ payment: 'free' }),
+    )
+  })
+
+  /**
+   * Paging appends rather than replacing. A page-number control is a poor
+   * target on a phone, and losing your place is worse than a long list.
+   */
+  it('appends the next page instead of replacing what is on screen', async () => {
+    users
+      .mockResolvedValueOnce({
+        data: {
+          query: 'a',
+          type: 'users',
+          data: [makeUser(1, 'first_one')],
+          relationships: {},
+          meta: { current_page: 1, last_page: 2, per_page: 1, total: 2 },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          query: 'a',
+          type: 'users',
+          data: [makeUser(2, 'second_one')],
+          relationships: {},
+          meta: { current_page: 2, last_page: 2, per_page: 1, total: 2 },
+        },
+      })
+
+    const wrapper = await mountSearch()
+    await type(wrapper, 'aziz')
+
+    await wrapper
+      .findAll('button')
+      .filter((b) => b.text().startsWith('Odamlar'))[0]!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('first_one')
+
+    const more = wrapper.findAll('button').find((b) => b.text().includes("Ko'proq yuklash"))!
+    await more.trigger('click')
+    await flushPromises()
+
+    expect(users).toHaveBeenLastCalledWith('aziz', 2)
+    // Both pages, not just the newest.
+    expect(wrapper.text()).toContain('first_one')
+    expect(wrapper.text()).toContain('second_one')
+  })
+
+  it('offers no load-more when there is only one page', async () => {
+    users.mockResolvedValue({
+      data: {
+        query: 'a',
+        type: 'users',
+        data: [makeUser(1, 'only_one')],
+        relationships: {},
+        meta: { current_page: 1, last_page: 1, per_page: 20, total: 1 },
+      },
+    })
+
+    const wrapper = await mountSearch()
+    await type(wrapper, 'aziz')
+
+    await wrapper
+      .findAll('button')
+      .filter((b) => b.text().startsWith('Odamlar'))[0]!
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some((b) => b.text().includes("Ko'proq yuklash"))).toBe(false)
+  })
+
+  it('names all four result types so people search is discoverable', async () => {
+    const wrapper = await mountSearch()
+
+    // The empty state has to say that this box finds people, not only
+    // activities — nothing on the screen used to.
+    expect(wrapper.text()).toContain('Odamlar')
+    expect(wrapper.text()).toContain('Faoliyatlar')
+    expect(wrapper.text()).toContain('Kategoriyalar')
   })
 
   it('offers recent searches when the box is empty', async () => {

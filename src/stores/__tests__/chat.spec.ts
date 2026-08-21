@@ -270,4 +270,128 @@ describe('chat store', () => {
 
     expect(chat.messages[0].read_at).toBeNull()
   })
+
+  // -- the badge, while the user is somewhere else -------------------------
+
+  /**
+   * `receive()` only ever fires for the conversation that is open, because the
+   * conversation channel is subscribed by ConversationView and left behind on
+   * navigation. Everything below is the other wire: the message notification on
+   * `App.Models.User.{id}`, which every screen holds open.
+   */
+  describe('noteMessageNotification', () => {
+    it('raises the badge for a thread the user is not looking at', async () => {
+      const chat = useChatStore()
+
+      api.list.mockResolvedValue({
+        data: { data: [makeConversation({ id: 7 })], meta: { total_unread: 0 } },
+      })
+      await chat.loadList()
+
+      chat.noteMessageNotification(7)
+
+      expect(chat.totalUnread).toBe(1)
+      expect(chat.conversations.find((c) => c.id === 7)?.unread_count).toBe(1)
+    })
+
+    /**
+     * The double-count guard. Both wires deliver the same message when a
+     * conversation is open; `receive()` marks it read, so this must not also
+     * count it. Getting this wrong shows a badge for a message on screen.
+     */
+    it('does not count a message in the conversation already open', async () => {
+      const chat = await openConversation(makeConversation({ id: 3 }))
+
+      chat.noteMessageNotification(3)
+
+      expect(chat.totalUnread).toBe(0)
+      expect(chat.conversations.find((c) => c.id === 3)?.unread_count).toBe(0)
+    })
+
+    it('refetches the list when the thread is not in it yet', async () => {
+      const chat = useChatStore()
+
+      api.list.mockResolvedValue({ data: { data: [], meta: { total_unread: 0 } } })
+      await chat.loadList()
+      api.list.mockClear()
+
+      // Somebody writing to us for the first time: there is no row to increment.
+      chat.noteMessageNotification(99)
+
+      expect(api.list).toHaveBeenCalledTimes(1)
+    })
+
+    it('still moves the badge when the list has never been loaded', () => {
+      const chat = useChatStore()
+
+      chat.noteMessageNotification(99)
+
+      expect(chat.totalUnread).toBe(1)
+      expect(api.list).not.toHaveBeenCalled()
+    })
+
+    it('ignores a payload with no usable conversation id', () => {
+      const chat = useChatStore()
+
+      chat.noteMessageNotification(Number(undefined))
+
+      expect(chat.totalUnread).toBe(0)
+    })
+
+    it('clears again when the conversation is opened', async () => {
+      const chat = useChatStore()
+
+      api.list.mockResolvedValue({
+        data: { data: [makeConversation({ id: 7 })], meta: { total_unread: 0 } },
+      })
+      await chat.loadList()
+
+      chat.noteMessageNotification(7)
+      chat.noteMessageNotification(7)
+      expect(chat.totalUnread).toBe(2)
+
+      api.markRead.mockResolvedValue({ data: { total_unread: 0 } })
+      await chat.markRead(7)
+
+      expect(chat.totalUnread).toBe(0)
+      expect(chat.conversations.find((c) => c.id === 7)?.unread_count).toBe(0)
+    })
+  })
+
+  describe('loadUnreadBadge', () => {
+    it('reads the count so the badge is right before chat is ever opened', async () => {
+      const chat = useChatStore()
+
+      api.list.mockResolvedValue({
+        data: { data: [makeConversation({ id: 1, unread_count: 4 })], meta: { total_unread: 4 } },
+      })
+
+      await chat.loadUnreadBadge()
+
+      expect(chat.totalUnread).toBe(4)
+    })
+
+    it('does not refetch when the list is already loaded', async () => {
+      const chat = useChatStore()
+
+      api.list.mockResolvedValue({ data: { data: [], meta: { total_unread: 0 } } })
+      await chat.loadList()
+      api.list.mockClear()
+
+      await chat.loadUnreadBadge()
+
+      expect(api.list).not.toHaveBeenCalled()
+    })
+
+    /** A wrong badge is worse than no badge. */
+    it('leaves the badge alone when the request fails', async () => {
+      const chat = useChatStore()
+
+      api.list.mockRejectedValue(new Error('offline'))
+
+      await chat.loadUnreadBadge()
+
+      expect(chat.totalUnread).toBe(0)
+    })
+  })
 })

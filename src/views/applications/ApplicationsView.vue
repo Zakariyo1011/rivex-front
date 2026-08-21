@@ -1,52 +1,68 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import AppTabs from '@/components/ui/AppTabs.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import ActivitiesTabs from '@/components/activity/ActivitiesTabs.vue'
+import ActivityRow from '@/components/activity/ActivityRow.vue'
 import { applicationsApi } from '@/api/applications'
 import { activitiesApi } from '@/api/activities'
+import { useAuthStore } from '@/stores/auth'
 import { categoryIcon, icons } from '@/lib/icons'
-import type { Application, Activity, ActivityStatus } from '@/types'
+import type { Application, Activity } from '@/types'
 import { formatActivityStart } from '@/lib/datetime'
 import { applicationStatus } from '@/lib/statusLabels'
 
-const tab = ref<'applications' | 'activities'>('applications')
+/**
+ * Applications, both directions.
+ *
+ * ## What changed and why
+ *
+ * The two tabs used to be "my applications" and "my activities", which put the
+ * activity list behind a screen called Arizalar and left **received**
+ * applications with no home at all — an organiser could only reach them by
+ * opening each activity in turn. My Activities has its own screen now, and this
+ * one answers the question its title asks: who is waiting on me, and what am I
+ * waiting on.
+ *
+ * The received tab is built from `/me/activities`, which already carries
+ * `pending_applications_count` per activity, rather than a new endpoint. The
+ * triage is per activity because that is where accepting happens — see
+ * `incoming-applications`, which this links into and which already exists.
+ *
+ * The local `activityStatusLabels` / `activityStatusVariants` maps that used to
+ * live here are gone: `lib/statusLabels` has held the canonical copy since the
+ * admin list and the detail page disagreed about it, and `ActivityRow` reads it.
+ */
+const auth = useAuthStore()
+
+const tab = ref<'sent' | 'received'>('sent')
 
 const applications = ref<Application[]>([])
 const applicationsLoaded = ref(false)
 const applicationsError = ref(false)
-const myActivities = ref<Activity[]>([])
-const activitiesLoaded = ref(false)
-const activitiesError = ref(false)
 
-const tabs = [
-  { value: 'applications', label: 'Mening arizalarim' },
-  { value: 'activities', label: 'Mening faoliyatlarim' },
-]
+const ownedActivities = ref<Activity[]>([])
+const ownedLoaded = ref(false)
+const ownedError = ref(false)
 
-const activityStatusLabels: Record<ActivityStatus, string> = {
-  draft: 'Qoralama',
-  published: "E'lon qilingan",
-  full: "To'lgan",
-  in_progress: 'Davom etmoqda',
-  completed: 'Yakunlangan',
-  cancelled: 'Bekor qilingan',
-  expired: "Muddati o'tgan",
-}
+const pendingTotal = computed(() => auth.counters?.pending_applications ?? 0)
 
-const activityStatusVariants: Record<ActivityStatus, 'primary' | 'success' | 'danger' | 'neutral'> =
+const tabs = computed(() => [
+  { value: 'sent', label: 'Yuborilgan' },
   {
-    draft: 'neutral',
-    published: 'primary',
-    full: 'success',
-    in_progress: 'success',
-    completed: 'neutral',
-    cancelled: 'danger',
-    expired: 'neutral',
-  }
+    value: 'received',
+    label: pendingTotal.value > 0 ? `Kelgan (${pendingTotal.value})` : 'Kelgan',
+  },
+])
+
+/** Only the activities that actually need a decision. */
+const awaiting = computed(() =>
+  ownedActivities.value.filter((a) => (a.pending_applications_count ?? 0) > 0),
+)
 
 async function cancel(application: Application) {
   await applicationsApi.cancel(application.id)
@@ -64,20 +80,20 @@ async function loadApplications() {
   }
 }
 
-async function loadActivities() {
-  activitiesError.value = false
+async function loadOwned() {
+  ownedError.value = false
   try {
-    const { data } = await activitiesApi.mine()
-    myActivities.value = data.data
-    activitiesLoaded.value = true
+    const { data } = await activitiesApi.mine('owned')
+    ownedActivities.value = data.data
+    ownedLoaded.value = true
   } catch {
-    activitiesError.value = true
+    ownedError.value = true
   }
 }
 
 async function selectTab(next: string) {
-  tab.value = next as 'applications' | 'activities'
-  if (next === 'activities' && !activitiesLoaded.value) await loadActivities()
+  tab.value = next as 'sent' | 'received'
+  if (next === 'received' && !ownedLoaded.value) await loadOwned()
 }
 
 onMounted(loadApplications)
@@ -86,13 +102,18 @@ onMounted(loadApplications)
 <template>
   <AppLayout>
     <template #header>
-      <h1 class="text-lg font-bold text-ink truncate">Arizalar</h1>
+      <h1 class="text-lg font-bold text-ink truncate">Faoliyatlar</h1>
     </template>
 
-    <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-2xl">
+    <div class="px-4 md:px-8 pt-4 md:pt-8 max-w-2xl pb-8">
+      <h1 class="hidden tablet:block text-xl font-bold text-ink mb-5">Faoliyatlar</h1>
+
+      <ActivitiesTabs class="mb-4" />
+
       <AppTabs :tabs="tabs" :model-value="tab" class="mb-5" @update:model-value="selectTab" />
 
-      <div v-if="tab === 'applications'">
+      <!-- Applications this user sent -->
+      <div v-if="tab === 'sent'">
         <div v-if="!applicationsLoaded && !applicationsError" class="space-y-3">
           <div v-for="i in 3" :key="i" class="card p-4 space-y-2">
             <Skeleton variant="text" width="60%" />
@@ -104,6 +125,7 @@ onMounted(loadApplications)
           v-else-if="applications.length === 0"
           :icon="icons.applications"
           title="Hozircha ariza yubormagansiz"
+          description="Faoliyatlarni ko'rib chiqing va qiziqarlisiga qo'shiling."
         />
 
         <div v-else class="space-y-3">
@@ -125,8 +147,8 @@ onMounted(loadApplications)
                 />
               </span>
               <div class="min-w-0 flex-1">
-                <p class="font-semibold text-ink">{{ application.activity.title }}</p>
-                <p class="text-sm text-ink-muted">
+                <p class="font-semibold text-ink truncate">{{ application.activity.title }}</p>
+                <p class="text-sm text-ink-muted truncate">
                   {{ formatActivityStart(application.activity.start_at) }}
                 </p>
                 <p v-if="application.message" class="text-sm text-ink-muted mt-1 line-clamp-2">
@@ -152,43 +174,29 @@ onMounted(loadApplications)
         </div>
       </div>
 
+      <!-- Applications waiting on this user's decision -->
       <div v-else>
-        <div v-if="!activitiesLoaded && !activitiesError" class="space-y-3">
+        <div v-if="!ownedLoaded && !ownedError" class="space-y-3">
           <div v-for="i in 3" :key="i" class="card p-4 space-y-2">
             <Skeleton variant="text" width="60%" />
             <Skeleton variant="text" width="40%" />
           </div>
         </div>
-        <ErrorState v-else-if="activitiesError" @retry="loadActivities" />
+        <ErrorState v-else-if="ownedError" @retry="loadOwned" />
         <EmptyState
-          v-else-if="myActivities.length === 0"
-          :icon="icons.createActivity"
-          title="Hozircha faoliyat yaratmagansiz"
+          v-else-if="awaiting.length === 0"
+          :icon="icons.applications"
+          title="Yangi ariza yo'q"
+          description="Faoliyatlaringizga ariza kelganda shu yerda ko'rinadi."
         />
 
         <div v-else class="space-y-3">
-          <RouterLink
-            v-for="activity in myActivities"
+          <ActivityRow
+            v-for="activity in awaiting"
             :key="activity.id"
-            :to="{ name: 'activity-detail', params: { id: activity.id } }"
-            class="card card-hover p-4 flex items-start gap-3"
-          >
-            <span
-              class="w-9 h-9 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center shrink-0"
-            >
-              <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" class="text-sm" />
-            </span>
-            <div class="min-w-0 flex-1">
-              <p class="font-semibold text-ink">{{ activity.title }}</p>
-              <p class="text-sm text-ink-muted">{{ formatActivityStart(activity.start_at) }}</p>
-            </div>
-            <StatusBadge
-              :status="activity.status"
-              :labels="activityStatusLabels"
-              :variants="activityStatusVariants"
-              class="shrink-0"
-            />
-          </RouterLink>
+            :activity="activity"
+            role="owner"
+          />
         </div>
       </div>
     </div>

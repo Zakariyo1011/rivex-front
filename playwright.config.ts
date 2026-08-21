@@ -52,7 +52,9 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [['list']],
 
-  globalSetup: './e2e/global-setup.ts',
+  // No globalSetup: the database reset has to happen *before* the servers
+  // start, and Playwright runs globalSetup after them. It is a `pretest:e2e`
+  // script now — see e2e/reset-db.mjs for the failure that forced the move.
 
   use: {
     baseURL: BASE_URL,

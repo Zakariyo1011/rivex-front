@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
@@ -10,28 +10,51 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
+import { activitiesApi } from '@/api/activities'
 import { applicationsApi } from '@/api/applications'
 import { extractErrorMessage } from '@/composables/useApiError'
 import { icons } from '@/lib/icons'
-import type { Application } from '@/types'
-import { applicationStatus } from '@/lib/statusLabels'
+import type { Activity, Application } from '@/types'
+import { activityStatus, applicationStatus } from '@/lib/statusLabels'
 import { userProfileRoute } from '@/lib/userLink'
 
 const route = useRoute()
 const router = useRouter()
 
 const applications = ref<Application[]>([])
+const activity = ref<Activity | null>(null)
 const loading = ref(true)
 const hasError = ref(false)
 const actingId = ref<number | null>(null)
 const error = ref('')
 
+/**
+ * Whether this activity can still take somebody on.
+ *
+ * 🔴 This screen offered Accept and Reject on any pending row, whatever had
+ * become of the activity. Completing an activity did not close its outstanding
+ * applications, so a meet-up that had happened still showed an Accept button —
+ * and pressing it used to add a participant, raise an invoice and write `full`
+ * straight over `completed`. That is the "completed does not stay completed"
+ * bug, seen from the screen that caused it.
+ *
+ * Both halves are fixed server-side (MatchService refuses, and completion now
+ * expires the applications). This says so before the attempt, because a button
+ * that only ever returns an error is not a button.
+ */
+const isOpen = computed(() => activity.value?.status === 'published')
+
 async function load() {
   loading.value = true
   hasError.value = false
   try {
-    const { data } = await applicationsApi.incoming(Number(route.params.id))
-    applications.value = data.data
+    const [applicationsRes, activityRes] = await Promise.all([
+      applicationsApi.incoming(Number(route.params.id)),
+      activitiesApi.show(route.params.id as string),
+    ])
+
+    applications.value = applicationsRes.data.data
+    activity.value = activityRes.data.data
   } catch {
     hasError.value = true
   } finally {
@@ -69,7 +92,17 @@ onMounted(load)
 <template>
   <AppLayout>
     <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-2xl">
-      <h1 class="text-xl font-bold text-ink mb-5">Kelgan arizalar</h1>
+      <h1 class="text-xl font-bold text-ink mb-1">Kelgan arizalar</h1>
+      <p v-if="activity" class="text-sm text-ink-muted mb-5 flex items-center gap-2 flex-wrap">
+        <span class="truncate">{{ activity.title }}</span>
+        <StatusBadge
+          v-if="activity.status !== 'published'"
+          :status="activity.status"
+          :labels="activityStatus.labels"
+          :variants="activityStatus.variants"
+        />
+      </p>
+      <div v-else class="mb-5" />
 
       <p v-if="error" class="text-sm text-danger mb-4">{{ error }}</p>
 
@@ -124,7 +157,7 @@ onMounted(load)
             "{{ application.message }}"
           </p>
 
-          <div v-if="application.status === 'pending'" class="flex gap-2">
+          <div v-if="application.status === 'pending' && isOpen" class="flex gap-2">
             <AppButton :loading="actingId === application.id" @click="accept(application)"
               >Qabul qilish</AppButton
             >
@@ -136,6 +169,17 @@ onMounted(load)
               Rad etish
             </AppButton>
           </div>
+          <!-- Still pending on the row, but the activity has moved on. Naming
+               the activity's state is the useful thing to say; the application
+               status alone ("Kutilmoqda") would suggest a decision is owed. -->
+          <p
+            v-else-if="application.status === 'pending'"
+            class="text-sm text-ink-muted flex items-center gap-2"
+          >
+            <FontAwesomeIcon :icon="icons.lock" class="text-xs" />
+            {{ activityStatus.labels[activity!.status] }} — yangi ishtirokchi qabul qilinmaydi
+          </p>
+
           <StatusBadge
             v-else
             :status="application.status"

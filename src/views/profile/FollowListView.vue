@@ -120,18 +120,27 @@ function updateRelationship(personId: number, relationship: FollowRelationship) 
 }
 
 /**
- * A list row carries only the three fields the server resolves in bulk, so the
- * rest are filled in with values that keep the button honest: a row never
- * claims a follow can be started when it does not know.
+ * The row's relationship, as the server resolved it.
+ *
+ * This used to derive `can_follow` here as "there is no follow row yet", which
+ * is the client deciding an authorization question it cannot see the inputs to:
+ * it ignores blocks and `who_can_follow`, so a list offered an enabled Follow
+ * button for an account refusing followers and the tap came back 422. The
+ * server now sends the complete relationship — see
+ * `FollowService::relationshipsForMany` — and this only supplies defaults for a
+ * payload that carries none at all, which is the anonymous case.
  */
 function relationshipFor(person: FollowListUser): FollowRelationship {
-  return {
-    is_following: person.relationship?.is_following ?? false,
-    follow_status: person.relationship?.follow_status ?? null,
-    is_followed_by: person.relationship?.is_followed_by ?? false,
-    can_follow: !person.relationship?.follow_status,
-    follow_needs_approval: false,
-  }
+  return (
+    person.relationship ?? {
+      is_following: false,
+      follow_status: null,
+      is_followed_by: false,
+      // Never claim a follow can be started when the server did not say so.
+      can_follow: false,
+      follow_needs_approval: false,
+    }
+  )
 }
 
 /** Kept in script: the strings carry apostrophes that a template expression

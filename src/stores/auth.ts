@@ -8,6 +8,7 @@ import type {
   OnboardingState,
   ProfileCompletion,
   User,
+  UserCounters,
   UsernamePolicy,
 } from '@/types'
 
@@ -30,6 +31,16 @@ export const useAuthStore = defineStore('auth', () => {
    * *else* may see the numbers, never the account holder.
    */
   const followCounts = ref<FollowCounts | null>(null)
+
+  /**
+   * Counts the navigation badges read, delivered with `/me`.
+   *
+   * Here rather than in an activities store because the badge is rendered by
+   * the shell on every screen, long before anything to do with activities is
+   * loaded — and because `/me` is already fetched on boot, so the badge is
+   * correct on the first paint instead of after a second request.
+   */
+  const counters = ref<UserCounters | null>(null)
   let inFlight: Promise<unknown> | null = null
 
   const isAuthenticated = computed(() => !!token.value)
@@ -48,6 +59,7 @@ export const useAuthStore = defineStore('auth', () => {
     completion.value = null
     usernamePolicy.value = null
     followCounts.value = null
+    counters.value = null
     inFlight = null
     localStorage.removeItem('rivex_token')
     useNotificationsStore().reset()
@@ -92,6 +104,7 @@ export const useAuthStore = defineStore('auth', () => {
     completion.value = data.completion ?? null
     usernamePolicy.value = data.username_policy ?? null
     followCounts.value = data.follow_counts ?? null
+    counters.value = data.counters ?? null
     return data.data
   }
 
@@ -131,6 +144,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     token,
     onboarding,
+    counters,
     completion,
     usernamePolicy,
     followCounts,

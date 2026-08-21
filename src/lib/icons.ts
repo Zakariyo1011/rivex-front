@@ -116,6 +116,8 @@ export const icons = {
   report: faFlag,
   block: faBan,
   priceTag: faTag,
+  /** The category vocabulary itself, as opposed to any one category's glyph. */
+  category: faTag,
   free: faGift,
   ownerPays: faMoneyBillTransfer,
   amount: faSackDollar,

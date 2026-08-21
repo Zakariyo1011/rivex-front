@@ -4,6 +4,7 @@ import type {
   OnboardingState,
   ProfileCompletion,
   User,
+  UserCounters,
   UsernamePolicy,
 } from '@/types'
 
@@ -37,6 +38,7 @@ export const authApi = {
       completion: ProfileCompletion
       username_policy: UsernamePolicy
       follow_counts: FollowCounts
+      counters: UserCounters
     }>('/me')
   },
   deleteAccount(password: string) {
