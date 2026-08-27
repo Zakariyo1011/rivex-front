@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { conversationsApi } from '@/api/conversations'
+import { describeApiError } from '@/composables/useApiError'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationsStore } from '@/stores/notifications'
 import type { Activity, Conversation, Message } from '@/types'
@@ -35,6 +36,32 @@ export const useChatStore = defineStore('chat', () => {
   const loadingOlder = ref(false)
 
   const totalUnread = ref(0)
+
+  /**
+   * The message the composer is currently answering, or null.
+   *
+   * Store state rather than component state, for the same reason the message
+   * list is: the reply is started from a *bubble* and consumed by the
+   * *composer*, which are siblings. Passing it between them through the view
+   * would make the view a router for one piece of state, and closing the
+   * conversation would have to remember to clear it — which is exactly the kind
+   * of thing that gets forgotten and leaves a reply preview hanging over the
+   * next thread you open.
+   */
+  const replyingTo = ref<Message | null>(null)
+
+  function startReply(message: Message) {
+    // A message that has not been accepted by the server yet has no real id to
+    // point at, and pointing at the temporary negative one would send a reply
+    // to a message that does not exist.
+    if (message.id < 0) return
+
+    replyingTo.value = message
+  }
+
+  function cancelReply() {
+    replyingTo.value = null
+  }
 
   const hasOlder = computed(() => olderCursor.value !== null)
 
@@ -145,6 +172,9 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     activities.value = []
     olderCursor.value = null
+    // Otherwise the reply preview survives into the next conversation opened,
+    // pointing at a message from a thread the composer is no longer in.
+    replyingTo.value = null
   }
 
   // -- sending --------------------------------------------------------------
@@ -155,21 +185,41 @@ export const useChatStore = defineStore('chat', () => {
 
     const tempId = -Date.now()
 
+    // Captured before the await and before the composer is cleared: the reply
+    // target is cleared as soon as the message is sent (so the composer returns
+    // to normal immediately), and reading it after the round trip would find
+    // nothing — or worse, a different message the user has since replied to.
+    const parent = replyingTo.value
+
     const optimistic: Message = {
       id: tempId,
       conversation_id: conversation.id,
       body,
       type: 'text',
       sender: auth.user,
+      // The preview is built locally so the reply renders as a reply
+      // immediately rather than flickering into one when the server answers.
+      // The server's own version replaces it below.
+      reply_to: parent
+        ? {
+            id: parent.id,
+            deleted: false,
+            body: parent.body,
+            type: parent.type,
+            sender: parent.sender,
+          }
+        : null,
+      reactions: [],
       read_at: null,
       created_at: new Date().toISOString(),
       pending: true,
     }
 
     messages.value.push(optimistic)
+    replyingTo.value = null
 
     try {
-      const { data } = await conversationsApi.sendMessage(conversation.id, body)
+      const { data } = await conversationsApi.sendMessage(conversation.id, body, parent?.id ?? null)
 
       const index = messages.value.findIndex((m) => m.id === tempId)
       if (index !== -1) messages.value.splice(index, 1)
@@ -182,23 +232,58 @@ export const useChatStore = defineStore('chat', () => {
       touch(conversation.id, data.data)
 
       return true
-    } catch {
+    } catch (e) {
       const failed = messages.value.find((m) => m.id === tempId)
       if (failed) {
         failed.pending = false
         failed.failed = true
+        // WHY it failed, not just that it did.
+        //
+        // Every failure used to render the same "Yuborilmadi", which is the
+        // least useful thing a chat can say: a message refused because the
+        // other person blocked you, one refused for rate limiting, and one that
+        // never left the browser all need different reactions from the sender,
+        // and retrying is only worth offering for some of them. The reason is
+        // derived by status and is deliberately free of backend detail — see
+        // describeApiError.
+        failed.failed_reason = describeApiError(e, 'message send')
       }
+
+      // The reply target is restored so the retry is still a reply. It was
+      // cleared optimistically when the send started.
+      if (parent) replyingTo.value = parent
 
       return false
     }
   }
 
-  /** Re-send a message whose first attempt failed, in place. */
+  /**
+   * Re-send a message whose first attempt failed, in place.
+   *
+   * The reply target is restored before re-sending, so retrying a failed reply
+   * sends a reply rather than silently degrading into a loose message — the
+   * failed row still carries its preview, and `send()` reads `replyingTo`.
+   */
   async function retry(message: Message): Promise<boolean> {
     const index = messages.value.findIndex((m) => m.id === message.id)
     if (index !== -1) messages.value.splice(index, 1)
 
+    const parentId = message.reply_to?.id ?? null
+
+    if (parentId !== null) {
+      replyingTo.value = messages.value.find((m) => m.id === parentId) ?? replyingTo.value
+    }
+
     return send(message.body)
+  }
+
+  /**
+   * Reactions on a message that failed to send are meaningless, and so is a
+   * stale failure reason once the row is gone. Kept together so a caller
+   * dismissing a failed message does not have to know about either.
+   */
+  function discardFailed(message: Message) {
+    messages.value = messages.value.filter((m) => m.id !== message.id)
   }
 
   // -- realtime -------------------------------------------------------------
@@ -228,6 +313,123 @@ export const useChatStore = defineStore('chat', () => {
     } else {
       bumpUnread(message.conversation_id)
     }
+  }
+
+  // -- reactions ------------------------------------------------------------
+
+  /**
+   * Apply one person's reaction change to a message, in place.
+   *
+   * The single primitive behind both the optimistic update and the realtime
+   * delta, so a reaction the user makes and a reaction that arrives on the wire
+   * cannot end up applied by two different sets of rules.
+   *
+   * `previousEmoji` is what makes a *change* work. Without it a change reads as
+   * an addition and the badge being left never comes down — so a person who
+   * switches from 👍 to ❤️ would appear to hold both.
+   */
+  function applyReaction(
+    messageId: number,
+    userId: number,
+    emoji: string | null,
+    previousEmoji: string | null,
+  ) {
+    const message = messages.value.find((m) => m.id === messageId)
+    if (!message) return
+
+    const groups = [...(message.reactions ?? [])].map((g) => ({ ...g, user_ids: [...g.user_ids] }))
+
+    const drop = (target: string | null) => {
+      if (!target) return
+      const group = groups.find((g) => g.emoji === target)
+      if (!group) return
+
+      group.user_ids = group.user_ids.filter((id) => id !== userId)
+      group.count = group.user_ids.length
+    }
+
+    // The user is removed from wherever they were, then added where they now
+    // are — never both at once, which is what keeps one-reaction-per-person
+    // true on the client as well as in the database.
+    drop(previousEmoji)
+
+    // Belt and braces: a lost frame could leave a stale membership behind, and
+    // re-applying the same delta must not double-count. Sweeping every group is
+    // O(5) and makes this idempotent.
+    groups.forEach((group) => {
+      if (group.emoji === emoji) return
+      const before = group.user_ids.length
+      group.user_ids = group.user_ids.filter((id) => id !== userId)
+      if (group.user_ids.length !== before) group.count = group.user_ids.length
+    })
+
+    if (emoji) {
+      const existing = groups.find((g) => g.emoji === emoji)
+
+      if (existing) {
+        if (!existing.user_ids.includes(userId)) {
+          existing.user_ids.push(userId)
+          existing.count = existing.user_ids.length
+        }
+      } else {
+        groups.push({ emoji, count: 1, user_ids: [userId] })
+      }
+    }
+
+    message.reactions = groups.filter((g) => g.count > 0)
+  }
+
+  /** A reaction change arriving on the conversation channel. */
+  function receiveReaction(payload: {
+    message_id: number
+    user_id: number
+    emoji: string | null
+    previous_emoji: string | null
+  }) {
+    applyReaction(payload.message_id, payload.user_id, payload.emoji, payload.previous_emoji)
+  }
+
+  /**
+   * Toggle the current user's reaction to a message.
+   *
+   * Tapping the emoji already held removes it; tapping a different one replaces
+   * it. That is the same rule the database enforces with its unique key, so the
+   * client and the server agree about what a second tap means.
+   *
+   * Optimistic, with the server's authoritative summary replacing the guess —
+   * and a rollback that restores the exact previous groups, because an
+   * optimistic update without a working rollback is a lie that is usually true.
+   */
+  async function toggleReaction(message: Message, emoji: string): Promise<void> {
+    const conversation = active.value
+    if (!conversation || !auth.user || message.id < 0) return
+
+    const userId = auth.user.id
+    const previousGroups = (message.reactions ?? []).map((g) => ({ ...g, user_ids: [...g.user_ids] }))
+    const current = previousGroups.find((g) => g.user_ids.includes(userId))?.emoji ?? null
+    const removing = current === emoji
+
+    applyReaction(message.id, userId, removing ? null : emoji, current)
+
+    try {
+      const { data } = removing
+        ? await conversationsApi.unreact(conversation.id, message.id)
+        : await conversationsApi.react(conversation.id, message.id, emoji)
+
+      const target = messages.value.find((m) => m.id === data.data.message_id)
+      if (target) target.reactions = data.data.reactions
+    } catch {
+      const target = messages.value.find((m) => m.id === message.id)
+      if (target) target.reactions = previousGroups
+    }
+  }
+
+  /** The emoji this user currently holds on a message, if any. */
+  function myReaction(message: Message): string | null {
+    const userId = auth.user?.id
+    if (userId === undefined) return null
+
+    return (message.reactions ?? []).find((g) => g.user_ids.includes(userId))?.emoji ?? null
   }
 
   /**
@@ -387,13 +589,21 @@ export const useChatStore = defineStore('chat', () => {
     loadingOlder,
     hasOlder,
     totalUnread,
+    replyingTo,
     loadList,
     open,
     loadOlder,
     close,
     send,
     retry,
+    discardFailed,
+    startReply,
+    cancelReply,
     receive,
+    applyReaction,
+    receiveReaction,
+    toggleReaction,
+    myReaction,
     applyReadReceipt,
     markRead,
     noteMessageNotification,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { setActivePinia, createPinia } from 'pinia'
+import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, ref, nextTick } from 'vue'
 import FollowButton from '@/components/profile/FollowButton.vue'
 import type { FollowRelationship } from '@/types'
@@ -27,6 +28,12 @@ vi.mock('@/composables/useToast', () => ({
  */
 describe('FollowButton', () => {
   beforeEach(() => {
+    // A fresh Pinia per test. The button reads and writes follow state through
+    // `useFollowStore` now (one source of truth across every screen), so it
+    // needs one — and a store carried between tests would let one test's
+    // optimistic update decide the next test's starting state.
+    setActivePinia(createPinia())
+
     follow.mockReset()
     unfollow.mockReset()
     toastError.mockReset()
@@ -85,8 +92,11 @@ describe('FollowButton', () => {
     const { wrapper, relationship } = mountButton()
 
     await wrapper.find('button').trigger('click')
-    await nextTick()
-    await nextTick()
+    // `flushPromises`, not a fixed number of ticks: the write goes through the
+    // follow store now, which is one more await than when this component owned
+    // the request, and counting microtasks makes the test depend on the depth
+    // of the call chain rather than on the behaviour.
+    await flushPromises()
 
     // The whole point: back exactly where it started, and the user is told.
     expect(relationship.value).toEqual(base)
@@ -105,8 +115,7 @@ describe('FollowButton', () => {
     const { wrapper, relationship } = mountButton(before)
 
     await wrapper.find('button').trigger('click')
-    await nextTick()
-    await nextTick()
+    await flushPromises()
 
     expect(relationship.value).toEqual(before)
     expect(toastError).toHaveBeenCalled()

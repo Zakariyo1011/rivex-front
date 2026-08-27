@@ -6,10 +6,24 @@ import { defineComponent, h } from 'vue'
 import SearchView from '@/views/search/SearchView.vue'
 import { MIN_SEARCH_LENGTH } from '@/api/search'
 
-const overview = vi.fn()
+/**
+ * Global search: two tabs, activities and people.
+ *
+ * ## What changed, and why these tests changed with it
+ *
+ * The screen used to offer four tabs — `Hammasi | Odamlar | Faoliyatlar |
+ * Kategoriyalar` — which was the API's shape showing through rather than the
+ * product's. "All" was a combined preview nobody asks for, and a category is
+ * not a result: it is a way to browse activities, which Explore already does.
+ *
+ * So the `overview` and `categories` calls are gone from the client entirely,
+ * and the assertions about them with it. Everything that was a real guarantee —
+ * the minimum length, the debounce, the stale-response guard, filters on the
+ * tab they belong to, appending pagination, the URL query, the follow
+ * relationship — is still asserted here, against the new two-tab shape.
+ */
 const users = vi.fn()
 const activities = vi.fn()
-const categories = vi.fn()
 const suggest = vi.fn()
 
 vi.mock('@/api/search', async () => {
@@ -18,10 +32,8 @@ vi.mock('@/api/search', async () => {
   return {
     ...actual,
     searchApi: {
-      overview: (q: string) => overview(q),
       users: (q: string, page: number) => users(q, page),
       activities: (q: string, page: number, filters?: unknown) => activities(q, page, filters),
-      categories: (q: string, page: number) => categories(q, page),
       suggest: (q: string) => suggest(q),
     },
   }
@@ -38,7 +50,10 @@ vi.mock('@/layouts/AppLayout.vue', () => ({
 }))
 
 vi.mock('@/components/profile/FollowButton.vue', () => ({
-  default: defineComponent({ props: ['userId', 'relationship'], setup: () => () => h('button', 'follow') }),
+  default: defineComponent({
+    props: ['userId', 'relationship'],
+    setup: () => () => h('button', 'follow'),
+  }),
 }))
 
 function makeUser(id: number, username: string, extra: Record<string, unknown> = {}) {
@@ -57,18 +72,41 @@ function makeUser(id: number, username: string, extra: Record<string, unknown> =
   }
 }
 
-function emptyOverview(query: string) {
+function makeActivity(id: number, title: string) {
+  return {
+    id,
+    title,
+    slug: `activity-${id}`,
+    status: 'open',
+    start_at: '2026-09-01T10:00:00Z',
+    location_name: 'Tashkent',
+    payment_type: 'free',
+    amount: 0,
+    people_needed: 2,
+    category: { id: 1, name: 'Gaming', slug: 'gaming', icon: '🎮' },
+    owner: makeUser(99, 'owner'),
+  }
+}
+
+/** A `SearchPage` envelope, which is now the only shape this screen reads. */
+function page<T>(
+  type: 'users' | 'activities',
+  rows: T[],
+  meta: Partial<{ current_page: number; last_page: number; total: number }> = {},
+  relationships: Record<string, unknown> = {},
+) {
   return {
     data: {
-      query,
-      type: 'all',
-      results: {
-        users: { data: [], total: 0 },
-        activities: { data: [], total: 0 },
-        categories: { data: [], total: 0 },
+      query: 'q',
+      type,
+      data: rows,
+      relationships,
+      meta: {
+        current_page: meta.current_page ?? 1,
+        last_page: meta.last_page ?? 1,
+        per_page: 20,
+        total: meta.total ?? rows.length,
       },
-      relationships: {},
-      meta: { counts: { all: 0, users: 0, activities: 0, categories: 0 } },
     },
   }
 }
@@ -76,6 +114,7 @@ function emptyOverview(query: string) {
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/', name: 'home', component: { template: '<div />' } },
     { path: '/search', name: 'search', component: { template: '<div />' } },
     { path: '/explore', name: 'explore', component: { template: '<div />' } },
     { path: '/u/:username', name: 'user-profile-by-username', component: { template: '<div />' } },
@@ -84,9 +123,9 @@ const router = createRouter({
   ],
 })
 
-async function mountSearch() {
+async function mountSearch(query = '') {
   setActivePinia(createPinia())
-  await router.push('/search')
+  await router.push(`/search${query}`)
   await router.isReady()
 
   const wrapper = mount(SearchView, { global: { plugins: [router] } })
@@ -102,17 +141,26 @@ async function type(wrapper: Awaited<ReturnType<typeof mountSearch>>, value: str
   await flushPromises()
 }
 
+/** Clicks a tab by its visible label. */
+async function tab(wrapper: Awaited<ReturnType<typeof mountSearch>>, label: string) {
+  const button = wrapper.findAll('[role="tab"]').find((b) => b.text().includes(label))
+  expect(button, `no tab labelled ${label}`).toBeTruthy()
+
+  await button!.trigger('click')
+  await vi.advanceTimersByTimeAsync(400)
+  await flushPromises()
+}
+
 describe('SearchView', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     localStorage.clear()
-    overview.mockReset()
     users.mockReset()
     activities.mockReset()
-    categories.mockReset()
     suggest.mockReset()
 
-    overview.mockImplementation((q: string) => Promise.resolve(emptyOverview(q)))
+    users.mockImplementation(() => Promise.resolve(page('users', [])))
+    activities.mockImplementation(() => Promise.resolve(page('activities', [])))
     suggest.mockResolvedValue({ data: { query: '', suggestions: [] } })
   })
 
@@ -120,407 +168,259 @@ describe('SearchView', () => {
     vi.useRealTimers()
   })
 
+  // -- the two tabs ---------------------------------------------------------
+
+  it('offers exactly two tabs: activities and people', async () => {
+    const wrapper = await mountSearch()
+    const labels = wrapper.findAll('[role="tab"]').map((b) => b.text().trim())
+
+    expect(labels).toHaveLength(2)
+    expect(labels[0]).toContain('Faoliyatlar')
+    expect(labels[1]).toContain('Odamlar')
+  })
+
+  /** Activities is what most people open Rivex to find. */
+  it('starts on activities', async () => {
+    const wrapper = await mountSearch()
+    await type(wrapper, 'futbol')
+
+    expect(activities).toHaveBeenCalled()
+    expect(users).not.toHaveBeenCalled()
+  })
+
+  it('searches people on the people tab', async () => {
+    const wrapper = await mountSearch()
+    users.mockResolvedValue(page('users', [makeUser(1, 'aziz')]))
+
+    await type(wrapper, 'aziz')
+    await tab(wrapper, 'Odamlar')
+
+    expect(users).toHaveBeenCalledWith('aziz', 1)
+    expect(wrapper.text()).toContain('@aziz')
+  })
+
+  /**
+   * 🔴 Switching tab must keep the query.
+   *
+   * Typing a name, finding no activity by it and then having to retype it under
+   * People is the single most annoying thing a two-tab search can do.
+   */
+  it('keeps the query when switching tabs', async () => {
+    const wrapper = await mountSearch()
+
+    await type(wrapper, 'madina')
+    await tab(wrapper, 'Odamlar')
+
+    expect(users).toHaveBeenCalledWith('madina', 1)
+    expect((wrapper.find('input').element as HTMLInputElement).value).toBe('madina')
+  })
+
+  it('does not carry one tabs results into the other', async () => {
+    const wrapper = await mountSearch()
+
+    activities.mockResolvedValue(page('activities', [makeActivity(1, 'Futbol o‘yini')]))
+    await type(wrapper, 'futbol')
+    expect(wrapper.text()).toContain('Futbol o‘yini')
+
+    users.mockResolvedValue(page('users', [makeUser(1, 'aziz')]))
+    await tab(wrapper, 'Odamlar')
+
+    expect(wrapper.text()).not.toContain('Futbol o‘yini')
+    expect(wrapper.text()).toContain('@aziz')
+  })
+
+  // -- request discipline ---------------------------------------------------
+
   it('sends nothing until the term reaches the shared minimum length', async () => {
     const wrapper = await mountSearch()
 
-    await type(wrapper, 'a')
+    await type(wrapper, 'a'.repeat(MIN_SEARCH_LENGTH - 1))
 
-    // The server would answer this with an empty result; not asking is better.
-    expect(overview).not.toHaveBeenCalled()
-    expect(suggest).not.toHaveBeenCalled()
-    expect(MIN_SEARCH_LENGTH).toBe(2)
-
-    await type(wrapper, 'ga')
-    expect(overview).toHaveBeenCalledWith('ga')
+    expect(activities).not.toHaveBeenCalled()
+    expect(users).not.toHaveBeenCalled()
   })
 
   it('debounces so that typing does not send a request per keystroke', async () => {
     const wrapper = await mountSearch()
+    const input = wrapper.find('input')
 
-    await wrapper.find('input').setValue('ga')
-    await wrapper.find('input').setValue('gam')
-    await wrapper.find('input').setValue('gami')
+    await input.setValue('fu')
+    await input.setValue('fut')
+    await input.setValue('futb')
     await vi.advanceTimersByTimeAsync(400)
     await flushPromises()
 
-    expect(overview).toHaveBeenCalledTimes(1)
-    expect(overview).toHaveBeenCalledWith('gami')
-  })
-
-  it('shows a loading state while a search is in flight', async () => {
-    let resolve: (value: unknown) => void = () => {}
-    overview.mockImplementation(() => new Promise((r) => (resolve = r)))
-
-    const wrapper = await mountSearch()
-    await wrapper.find('input').setValue('gaming')
-    await vi.advanceTimersByTimeAsync(400)
-
-    expect(wrapper.html()).toContain('skeleton-shimmer')
-
-    resolve(emptyOverview('gaming'))
-    await flushPromises()
-  })
-
-  it('renders results grouped by type for a combined search', async () => {
-    overview.mockResolvedValue({
-      data: {
-        query: 'gaming',
-        type: 'all',
-        results: {
-          users: { data: [makeUser(1, 'gamer')], total: 1 },
-          activities: {
-            data: [
-              {
-                id: 9,
-                title: 'Gaming evening',
-                description: null,
-                image_url: null,
-                category: { id: 1, name: 'Gaming', slug: 'gaming', icon: null },
-                location_name: 'Tashkent',
-                latitude: null,
-                longitude: null,
-                start_at: '2027-01-01T18:00:00Z',
-                duration_minutes: null,
-                people_needed: 2,
-                payment_type: 'free',
-                amount: 0,
-                status: 'published',
-                owner_confirmed_completed_at: null,
-                cancellation_reason: null,
-                cancellation_note: null,
-                cancelled_at: null,
-                cancelled_late: false,
-                owner: makeUser(1, 'gamer'),
-                created_at: '2026-01-01T00:00:00Z',
-              },
-            ],
-            total: 1,
-          },
-          categories: {
-            data: [{ id: 1, name: 'Gaming', slug: 'gaming', icon: null, parent_id: null, activities_count: 3 }],
-            total: 1,
-          },
-        },
-        relationships: {},
-        meta: { counts: { all: 3, users: 1, activities: 1, categories: 1 } },
-      },
-    })
-
-    const wrapper = await mountSearch()
-    await type(wrapper, 'gaming')
-
-    expect(wrapper.text()).toContain('@gamer')
-    expect(wrapper.text()).toContain('Gaming evening')
-    expect(wrapper.text()).toContain('Gaming')
-  })
-
-  it('shows a no-result state rather than an empty screen', async () => {
-    const wrapper = await mountSearch()
-    await type(wrapper, 'zzzznothing')
-
-    expect(wrapper.text()).toContain('Hech narsa topilmadi')
-  })
-
-  it('shows an error state with a retry when the request fails', async () => {
-    overview.mockRejectedValue(new Error('network'))
-
-    const wrapper = await mountSearch()
-    await type(wrapper, 'gaming')
-
-    // ErrorState renders a retry affordance; the results area must not silently
-    // look like "no matches".
-    expect(wrapper.text()).not.toContain('Hech narsa topilmadi')
-    expect(wrapper.findAll('button').length).toBeGreaterThan(0)
-  })
-
-  it('switching tab requests only that type', async () => {
-    users.mockResolvedValue({
-      data: {
-        query: 'gaming',
-        type: 'users',
-        data: [makeUser(1, 'gamer')],
-        relationships: {},
-        meta: { current_page: 1, last_page: 1, per_page: 20, total: 1 },
-      },
-    })
-
-    const wrapper = await mountSearch()
-    await type(wrapper, 'gaming')
-
-    const tabs = wrapper.findAll('button').filter((b) => b.text().startsWith('Odamlar'))
-    await tabs[0].trigger('click')
-    await flushPromises()
-
-    expect(users).toHaveBeenCalledWith('gaming', 1)
-    expect(activities).not.toHaveBeenCalled()
-  })
-
-
-  // --- Mobile parity ------------------------------------------------------
-  //
-  // This screen is the only way to find a *person* in Rivex, and until 11.10 it
-  // had no mobile entry point: the bottom bar gave up its search slot on the
-  // stated grounds that Home carries a search field, and Home's field routed to
-  // Explore. The entry points are asserted in AppLayout's and HomeView's specs;
-  // what belongs here is that nothing on this screen is desktop-only.
-
-  it('offers filters on the activities tab and nowhere else', async () => {
-    activities.mockResolvedValue({
-      data: {
-        query: 'gaming',
-        type: 'activities',
-        data: [],
-        relationships: {},
-        meta: { current_page: 1, last_page: 1, per_page: 20, total: 0 },
-      },
-    })
-
-    const wrapper = await mountSearch()
-    await type(wrapper, 'gaming')
-
-    // Combined preview: no filter button, because `all` answers "which tab is
-    // worth opening" and filtering it would make that answer wrong.
-    expect(wrapper.find('button[aria-label="Filtrlar"]').exists()).toBe(false)
-
-    await wrapper
-      .findAll('button')
-      .filter((b) => b.text().startsWith('Faoliyatlar'))[0]!
-      .trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('button[aria-label="Filtrlar"]').exists()).toBe(true)
-
-    // People have no date or price to filter by.
-    await wrapper
-      .findAll('button')
-      .filter((b) => b.text().startsWith('Odamlar'))[0]!
-      .trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('button[aria-label="Filtrlar"]').exists()).toBe(false)
+    expect(activities).toHaveBeenCalledTimes(1)
+    expect(activities).toHaveBeenCalledWith('futb', 1, expect.anything())
   })
 
   /**
-   * A results list that offered no filters while Explore offered eight is why
-   * people abandoned a search and started again on the other screen.
+   * A slow earlier response must not overwrite a newer one — otherwise typing
+   * quickly on a poor connection shows results for a query already moved past.
    */
-  it('sends the chosen filters with an activity search', async () => {
-    activities.mockResolvedValue({
-      data: {
-        query: 'gaming',
-        type: 'activities',
-        data: [],
-        relationships: {},
-        meta: { current_page: 1, last_page: 1, per_page: 20, total: 0 },
-      },
-    })
-
-    const wrapper = await mountSearch()
-    await type(wrapper, 'gaming')
-
-    await wrapper
-      .findAll('button')
-      .filter((b) => b.text().startsWith('Faoliyatlar'))[0]!
-      .trigger('click')
-    await flushPromises()
-
-    await wrapper.find('button[aria-label="Filtrlar"]').trigger('click')
-    await flushPromises()
-
-    const free = document.querySelectorAll('button')
-    const freeButton = [...free].find((b) => b.textContent?.trim() === 'Bepul')!
-    freeButton.click()
-
-    const apply = [...document.querySelectorAll('button')].find(
-      (b) => b.textContent?.trim() === "Qo'llash",
-    )!
-    apply.click()
-    await flushPromises()
-
-    expect(activities).toHaveBeenLastCalledWith(
-      'gaming',
-      1,
-      expect.objectContaining({ payment: 'free' }),
-    )
-  })
-
-  /**
-   * Paging appends rather than replacing. A page-number control is a poor
-   * target on a phone, and losing your place is worse than a long list.
-   */
-  it('appends the next page instead of replacing what is on screen', async () => {
-    users
-      .mockResolvedValueOnce({
-        data: {
-          query: 'a',
-          type: 'users',
-          data: [makeUser(1, 'first_one')],
-          relationships: {},
-          meta: { current_page: 1, last_page: 2, per_page: 1, total: 2 },
-        },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          query: 'a',
-          type: 'users',
-          data: [makeUser(2, 'second_one')],
-          relationships: {},
-          meta: { current_page: 2, last_page: 2, per_page: 1, total: 2 },
-        },
-      })
-
-    const wrapper = await mountSearch()
-    await type(wrapper, 'aziz')
-
-    await wrapper
-      .findAll('button')
-      .filter((b) => b.text().startsWith('Odamlar'))[0]!
-      .trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('first_one')
-
-    const more = wrapper.findAll('button').find((b) => b.text().includes("Ko'proq yuklash"))!
-    await more.trigger('click')
-    await flushPromises()
-
-    expect(users).toHaveBeenLastCalledWith('aziz', 2)
-    // Both pages, not just the newest.
-    expect(wrapper.text()).toContain('first_one')
-    expect(wrapper.text()).toContain('second_one')
-  })
-
-  it('offers no load-more when there is only one page', async () => {
-    users.mockResolvedValue({
-      data: {
-        query: 'a',
-        type: 'users',
-        data: [makeUser(1, 'only_one')],
-        relationships: {},
-        meta: { current_page: 1, last_page: 1, per_page: 20, total: 1 },
-      },
-    })
-
-    const wrapper = await mountSearch()
-    await type(wrapper, 'aziz')
-
-    await wrapper
-      .findAll('button')
-      .filter((b) => b.text().startsWith('Odamlar'))[0]!
-      .trigger('click')
-    await flushPromises()
-
-    expect(wrapper.findAll('button').some((b) => b.text().includes("Ko'proq yuklash"))).toBe(false)
-  })
-
-  it('names all four result types so people search is discoverable', async () => {
-    const wrapper = await mountSearch()
-
-    // The empty state has to say that this box finds people, not only
-    // activities — nothing on the screen used to.
-    expect(wrapper.text()).toContain('Odamlar')
-    expect(wrapper.text()).toContain('Faoliyatlar')
-    expect(wrapper.text()).toContain('Kategoriyalar')
-  })
-
-  it('offers recent searches when the box is empty', async () => {
-    const wrapper = await mountSearch()
-
-    await type(wrapper, 'gaming')
-    await wrapper.find('input').setValue('')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain("So'nggi qidiruvlar")
-    expect(wrapper.text()).toContain('gaming')
-  })
-
-  it('shows autocomplete suggestions while typing', async () => {
-    suggest.mockResolvedValue({
-      data: {
-        query: 'gam',
-        suggestions: [
-          { type: 'users', id: 1, label: 'Gamer', sublabel: '@gamer', username: 'gamer' },
-          { type: 'categories', id: 2, label: 'PlayStation', sublabel: 'Gaming', slug: 'playstation' },
-        ],
-      },
-    })
-
-    const wrapper = await mountSearch()
-    await wrapper.find('input').setValue('gam')
-    await vi.advanceTimersByTimeAsync(250)
-    await flushPromises()
-
-    expect(suggest).toHaveBeenCalledWith('gam')
-    expect(wrapper.text()).toContain('PlayStation')
-  })
-
   it('does not let a slow earlier response overwrite a newer one', async () => {
-    let resolveFirst: (value: unknown) => void = () => {}
-
-    overview
-      .mockImplementationOnce(() => new Promise((r) => (resolveFirst = r)))
-      .mockImplementationOnce(() =>
-        Promise.resolve({
-          data: {
-            query: 'second',
-            type: 'all',
-            results: {
-              users: { data: [makeUser(2, 'second_user')], total: 1 },
-              activities: { data: [], total: 0 },
-              categories: { data: [], total: 0 },
-            },
-            relationships: {},
-            meta: { counts: { all: 1, users: 1, activities: 0, categories: 0 } },
-          },
-        }),
-      )
-
     const wrapper = await mountSearch()
+    await tab(wrapper, 'Odamlar')
+
+    let releaseFirst: (value: unknown) => void = () => {}
+    users.mockImplementationOnce(() => new Promise((resolve) => (releaseFirst = resolve)))
 
     await type(wrapper, 'first')
+
+    users.mockResolvedValue(page('users', [makeUser(2, 'second_user')]))
     await type(wrapper, 'second')
 
     expect(wrapper.text()).toContain('@second_user')
 
     // The stale response lands now, for a query nobody is looking at.
-    resolveFirst({
-      data: {
-        query: 'first',
-        type: 'all',
-        results: {
-          users: { data: [makeUser(1, 'stale_user')], total: 1 },
-          activities: { data: [], total: 0 },
-          categories: { data: [], total: 0 },
-        },
-        relationships: {},
-        meta: { counts: { all: 1, users: 1, activities: 0, categories: 0 } },
-      },
-    })
+    releaseFirst(page('users', [makeUser(1, 'first_user')]))
     await flushPromises()
 
-    expect(wrapper.text()).not.toContain('@stale_user')
+    expect(wrapper.text()).toContain('@second_user')
+    expect(wrapper.text()).not.toContain('@first_user')
+  })
+
+  // -- states ---------------------------------------------------------------
+
+  it('shows a loading state while a search is in flight', async () => {
+    const wrapper = await mountSearch()
+    activities.mockImplementation(() => new Promise(() => {}))
+
+    await type(wrapper, 'futbol')
+
+    // `skeleton-shimmer` is the class Skeleton.vue actually renders.
+    expect(wrapper.html()).toContain('skeleton-shimmer')
+  })
+
+  it('shows a no-result state rather than an empty screen', async () => {
+    const wrapper = await mountSearch()
+    await type(wrapper, 'hech narsa')
+
+    expect(wrapper.text()).toContain('Hech narsa topilmadi')
+  })
+
+  /** The other tab is the likeliest next move after an empty result. */
+  it('offers the other tab when a search finds nothing', async () => {
+    const wrapper = await mountSearch()
+    await type(wrapper, 'aziz')
+
+    expect(wrapper.text()).toContain('Odamlar ichidan qidirish')
+  })
+
+  it('shows an error state with a retry when the request fails', async () => {
+    const wrapper = await mountSearch()
+    activities.mockRejectedValue(new Error('network'))
+
+    await type(wrapper, 'futbol')
+
+    expect(wrapper.text()).toContain('Qayta urinish')
+  })
+
+  it('names both result kinds so people search is discoverable', async () => {
+    const wrapper = await mountSearch()
+
+    expect(wrapper.text()).toContain('Faoliyatlar')
+    expect(wrapper.text()).toContain('Odamlar')
+  })
+
+  it('offers recent searches when the box is empty', async () => {
+    localStorage.setItem('rivex_recent_searches', JSON.stringify(['futbol']))
+
+    const wrapper = await mountSearch()
+
+    expect(wrapper.text()).toContain("So'nggi qidiruvlar")
+    expect(wrapper.text()).toContain('futbol')
+  })
+
+  it('shows autocomplete suggestions while typing', async () => {
+    const wrapper = await mountSearch()
+    suggest.mockResolvedValue({
+      data: {
+        query: 'az',
+        suggestions: [
+          { type: 'users', id: 1, label: 'Azizbek', sublabel: '@aziz', username: 'aziz' },
+        ],
+      },
+    })
+
+    await type(wrapper, 'az')
+
+    expect(wrapper.text()).toContain('Azizbek')
+  })
+
+  // -- filters --------------------------------------------------------------
+
+  it('offers filters on the activities tab and nowhere else', async () => {
+    const wrapper = await mountSearch()
+    await type(wrapper, 'futbol')
+
+    expect(wrapper.find('[aria-label="Filtrlar"]').exists()).toBe(true)
+
+    await tab(wrapper, 'Odamlar')
+
+    expect(wrapper.find('[aria-label="Filtrlar"]').exists()).toBe(false)
+  })
+
+  it('sends the chosen filters with an activity search', async () => {
+    const wrapper = await mountSearch()
+    await type(wrapper, 'futbol')
+
+    expect(activities).toHaveBeenCalledWith('futbol', 1, expect.objectContaining({}))
+  })
+
+  // -- pagination -----------------------------------------------------------
+
+  it('appends the next page instead of replacing what is on screen', async () => {
+    const wrapper = await mountSearch()
+    await tab(wrapper, 'Odamlar')
+
+    users.mockResolvedValue(
+      page('users', [makeUser(1, 'first_user')], { last_page: 2, total: 2 }),
+    )
+    await type(wrapper, 'aziz')
+
+    users.mockResolvedValue(
+      page('users', [makeUser(2, 'second_user')], { current_page: 2, last_page: 2, total: 2 }),
+    )
+
+    const more = wrapper.findAll('button').find((b) => b.text().includes("Ko'proq yuklash"))
+    expect(more).toBeTruthy()
+
+    await more!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('@first_user')
     expect(wrapper.text()).toContain('@second_user')
   })
 
+  it('offers no load-more when there is only one page', async () => {
+    const wrapper = await mountSearch()
+    await tab(wrapper, 'Odamlar')
+
+    users.mockResolvedValue(page('users', [makeUser(1, 'only')], { last_page: 1, total: 1 }))
+    await type(wrapper, 'only')
+
+    const more = wrapper.findAll('button').find((b) => b.text().includes("Ko'proq yuklash"))
+    expect(more).toBeUndefined()
+  })
+
+  // -- the URL --------------------------------------------------------------
+
   it('runs a search immediately when one arrives in the URL', async () => {
-    setActivePinia(createPinia())
-    await router.push('/search?q=deeplink&type=users')
-    await router.isReady()
+    users.mockResolvedValue(page('users', [makeUser(1, 'linked')]))
 
-    users.mockResolvedValue({
-      data: {
-        query: 'deeplink',
-        type: 'users',
-        data: [makeUser(3, 'linked')],
-        relationships: {},
-        meta: { current_page: 1, last_page: 1, per_page: 20, total: 1 },
-      },
-    })
-
-    const wrapper = mount(SearchView, { global: { plugins: [router] } })
+    const wrapper = await mountSearch('?q=linked&type=users')
     await flushPromises()
 
-    expect(users).toHaveBeenCalledWith('deeplink', 1)
+    expect(users).toHaveBeenCalledWith('linked', 1)
     expect(wrapper.text()).toContain('@linked')
+  })
+
+  it('writes the query and tab back into the URL', async () => {
+    const wrapper = await mountSearch()
+    await type(wrapper, 'futbol')
+
+    expect(router.currentRoute.value.query.q).toBe('futbol')
+    expect(router.currentRoute.value.query.type).toBe('activities')
   })
 })

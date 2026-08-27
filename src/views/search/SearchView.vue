@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import AppSearchInput from '@/components/ui/AppSearchInput.vue'
@@ -9,7 +9,6 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
 import SearchUserResult from '@/components/search/SearchUserResult.vue'
 import SearchActivityResult from '@/components/search/SearchActivityResult.vue'
-import SearchCategoryResult from '@/components/search/SearchCategoryResult.vue'
 import ExploreFilterSheet, { type ExploreFilters } from '@/components/explore/ExploreFilterSheet.vue'
 import {
   searchApi,
@@ -23,56 +22,69 @@ import { locationsApi } from '@/api/locations'
 import { useRecentSearches } from '@/composables/useRecentSearches'
 import { useAuthStore } from '@/stores/auth'
 import { icons } from '@/lib/icons'
-import type { Activity, Category, FollowRelationship, Region, User } from '@/types'
+import type { Activity, FollowRelationship, Region, User } from '@/types'
 import { userProfileRoute } from '@/lib/userLink'
 
 /**
- * Global search.
+ * Global search: activities and people.
  *
- * One box over people, activities and the category tree. Distinct from Explore,
- * which browses activities with filters — this is for when somebody knows
- * roughly what they are looking for and does not want to pick a screen first.
+ * ## Two tabs, where there were four
  *
- * ## This screen was unreachable on a phone
+ * This screen used to offer `Hammasi | Odamlar | Faoliyatlar | Kategoriyalar`,
+ * which was the API's shape showing through rather than the product's. "All"
+ * was a combined preview nobody asks for, and a category is not a *result* — it
+ * is a way to browse activities, which Explore already does. Four tabs at 375px
+ * also left "Kategoriyalar" three characters wide.
  *
- * 🔴 It is the only way to find a *person* in Rivex, and mobile had no route to
- * it: the bottom bar gave up its search slot on the stated grounds that Home
- * carries a search field, and Home's field routed to Explore, which browses
- * activities. So the screen existed, worked, and could not be opened. Two entry
- * points now lead here — Home's field and a button in `AppLayout`'s mobile
- * header — and both go to this one route rather than to a mobile variant.
+ * People open search with one of two things in mind: find an activity, or find
+ * a person. Those are the tabs. Categories are still reachable from
+ * autocomplete, where picking one deep-links into Explore filtered by it.
  *
- * ## Mobile is the layout, not a reduced version
+ * ## One column, and why the layout was wrong before
  *
- * The header is sticky and holds the input, so the box stays reachable while
- * results scroll. Tabs scroll horizontally rather than shrinking to four
- * unreadable thirds at 375px. Paging is a "load more" that appends, because a
- * page-number control is a poor target on a phone and losing your place is
- * worse than a longer list. Nothing is hidden here that desktop has — including
- * the filters, which are the same sheet Explore uses and the same rules
- * server-side.
+ * 🔴 The header, the field and the results were each given their own width and
+ * alignment: the title sat hard against the left edge at `px-8` while the field
+ * was a centred `max-w-2xl` card. They did not share an axis, so the title did
+ * not look like it belonged to the thing underneath it, and the whole screen
+ * read as parts assembled rather than a page. Everything now lives in one
+ * centred column, so the eye follows a single edge from the title to the last
+ * result.
+ *
+ * ## Sticky, but only where it earns its place
+ *
+ * On a phone the field stays reachable while results scroll, because re-finding
+ * it would mean scrolling back. On desktop nothing sticks: there is no top
+ * navigation to attach to, vertical space is not scarce, and a bar pinned to
+ * the top of the window is exactly what made this screen look glued to the
+ * chrome. The field also draws its separating border only once something has
+ * scrolled behind it.
  *
  * ## Why the query lives in the URL
  *
- * `?q=` and `?type=` make a search shareable, bookmarkable and survivable across
- * a reload, and the browser's back button then steps through searches the way
- * people expect. It also means the deep link from an autocomplete suggestion and
- * a typed query end up in exactly the same state.
+ * `?q=` and `?type=` make a search shareable, bookmarkable and survivable
+ * across a reload, and the back button then steps through searches the way
+ * people expect.
  */
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const recent = useRecentSearches()
 
-const TYPES: { value: SearchTypeKey; label: string; icon: typeof icons.profile }[] = [
-  { value: 'all', label: 'Hammasi', icon: icons.explore },
-  { value: 'users', label: 'Odamlar', icon: icons.profile },
+const TABS: { value: SearchTypeKey; label: string; icon: typeof icons.profile }[] = [
   { value: 'activities', label: 'Faoliyatlar', icon: icons.date },
-  { value: 'categories', label: 'Kategoriyalar', icon: icons.category },
+  { value: 'users', label: 'Odamlar', icon: icons.profile },
 ]
 
+/** Activities first: it is what most people come to Rivex to find. */
+const DEFAULT_TYPE: SearchTypeKey = 'activities'
+
+function typeFromRoute(): SearchTypeKey {
+  const value = route.query.type
+  return value === 'users' || value === 'activities' ? value : DEFAULT_TYPE
+}
+
 const input = ref((route.query.q as string) ?? '')
-const activeType = ref<SearchTypeKey>((route.query.type as SearchTypeKey) ?? 'all')
+const activeType = ref<SearchTypeKey>(typeFromRoute())
 const page = ref(1)
 
 const loading = ref(false)
@@ -83,9 +95,8 @@ const searched = ref(false)
 
 const users = ref<User[]>([])
 const activities = ref<Activity[]>([])
-const categories = ref<Category[]>([])
 const relationships = ref<Record<string, SearchRelationship>>({})
-const counts = ref<Record<string, number>>({})
+const total = ref(0)
 const lastPage = ref(1)
 
 const suggestions = ref<Suggestion[]>([])
@@ -124,7 +135,7 @@ const activeFilterCount = computed(() => {
   return count
 })
 
-/** Filters belong to activities; people and categories have no date or price. */
+/** Filters belong to activities; people have no date or price. */
 const filtersApply = computed(() => activeType.value === 'activities')
 
 function activityFilterParams(): ActivityFilters {
@@ -162,42 +173,39 @@ function applyFilters(next: ExploreFilters) {
   run()
 }
 
+function clearFilters() {
+  applyFilters({
+    ...filters,
+    date: null,
+    time_of_day: null,
+    payment: null,
+    people_needed: null,
+    min_amount: null,
+    max_amount: null,
+    verified_only: false,
+    region_id: null,
+  })
+}
+
 // --- Derived state ----------------------------------------------------------
 
 const trimmed = computed(() => input.value.trim())
 const tooShort = computed(() => trimmed.value.length > 0 && trimmed.value.length < MIN_SEARCH_LENGTH)
 const isEmpty = computed(() => trimmed.value.length === 0)
 
-const tabs = computed(() =>
-  TYPES.map((type) => {
-    const count = counts.value[type.value]
-
-    return { ...type, count: type.value === 'all' ? null : (count ?? null) }
-  }),
-)
+const results = computed(() => (activeType.value === 'users' ? users.value : activities.value))
 
 const noResults = computed(
-  () =>
-    searched.value &&
-    !loading.value &&
-    !hasError.value &&
-    users.value.length === 0 &&
-    activities.value.length === 0 &&
-    categories.value.length === 0,
+  () => searched.value && !loading.value && !hasError.value && results.value.length === 0,
 )
 
-const canLoadMore = computed(
-  () => activeType.value !== 'all' && page.value < lastPage.value && !loading.value,
-)
-
-const showUsers = computed(() => activeType.value === 'all' || activeType.value === 'users')
-const showActivities = computed(() => activeType.value === 'all' || activeType.value === 'activities')
-const showCategories = computed(() => activeType.value === 'all' || activeType.value === 'categories')
+const canLoadMore = computed(() => page.value < lastPage.value && !loading.value)
 
 // --- Debounce ---------------------------------------------------------------
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 let suggestTimer: ReturnType<typeof setTimeout> | undefined
+
 /**
  * Guards against an earlier, slower response overwriting a later one — the same
  * token pattern the handle checker uses. Without it, typing quickly on a poor
@@ -217,8 +225,6 @@ function clearTimers() {
   clearTimeout(searchTimer)
   clearTimeout(suggestTimer)
 }
-
-onBeforeUnmount(clearTimers)
 
 watch(input, (value) => {
   clearTimers()
@@ -240,8 +246,15 @@ watch(input, (value) => {
   }, 350)
 })
 
+/**
+ * Switching tab keeps the query.
+ *
+ * Typing a name, finding no activity by it and then having to retype it under
+ * People is the single most annoying thing a two-tab search can do.
+ */
 watch(activeType, () => {
   page.value = 1
+  resetResults()
   if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
   syncUrl()
 })
@@ -251,9 +264,8 @@ watch(activeType, () => {
 function resetResults() {
   users.value = []
   activities.value = []
-  categories.value = []
   relationships.value = {}
-  counts.value = {}
+  total.value = 0
   lastPage.value = 1
 }
 
@@ -288,48 +300,27 @@ async function run(append = false) {
   hasError.value = false
 
   try {
-    if (activeType.value === 'all') {
-      const { data } = await searchApi.overview(q)
-      if (mine !== token) return
+    const { data } =
+      activeType.value === 'users'
+        ? await searchApi.users(q, page.value)
+        : await searchApi.activities(q, page.value, activityFilterParams())
 
-      users.value = data.results.users.data
-      activities.value = data.results.activities.data
-      categories.value = data.results.categories.data
-      relationships.value = data.relationships ?? {}
-      counts.value = data.meta.counts
-      lastPage.value = 1
+    if (mine !== token) return
+
+    if (activeType.value === 'users') {
+      const rows = data.data as User[]
+      users.value = append ? [...users.value, ...rows] : rows
     } else {
-      if (!append) resetResults()
-
-      const { data } =
-        activeType.value === 'users'
-          ? await searchApi.users(q, page.value)
-          : activeType.value === 'activities'
-            ? await searchApi.activities(q, page.value, activityFilterParams())
-            : await searchApi.categories(q, page.value)
-
-      if (mine !== token) return
-
-      if (activeType.value === 'users') {
-        users.value = append ? [...users.value, ...(data.data as User[])] : (data.data as User[])
-      }
-      if (activeType.value === 'activities') {
-        activities.value = append
-          ? [...activities.value, ...(data.data as Activity[])]
-          : (data.data as Activity[])
-      }
-      if (activeType.value === 'categories') {
-        categories.value = append
-          ? [...categories.value, ...(data.data as Category[])]
-          : (data.data as Category[])
-      }
-
-      relationships.value = append
-        ? { ...relationships.value, ...data.relationships }
-        : (data.relationships ?? {})
-      counts.value = { ...counts.value, [activeType.value]: data.meta.total }
-      lastPage.value = data.meta.last_page
+      const rows = data.data as Activity[]
+      activities.value = append ? [...activities.value, ...rows] : rows
     }
+
+    relationships.value = append
+      ? { ...relationships.value, ...data.relationships }
+      : (data.relationships ?? {})
+
+    total.value = data.meta.total
+    lastPage.value = data.meta.last_page
 
     searched.value = true
     recent.remember(q)
@@ -395,6 +386,27 @@ function dismissSuggestions() {
   }, 150)
 }
 
+/** The field and its dropdown, for the outside-click test below. */
+const fieldRegion = ref<HTMLElement | null>(null)
+
+/**
+ * Close the suggestions when the press lands anywhere else.
+ *
+ * 🔴 Blur was the only thing that dismissed this panel, and clicking on the
+ * page body does not blur an input — so the dropdown sat open on top of the
+ * tabs and the first result, and the only ways out were to focus the field
+ * again or to pick something.
+ *
+ * `mousedown` rather than `click`, so the panel is gone before the click
+ * resolves on whatever is underneath it — otherwise dismissing costs two taps.
+ */
+function onDocumentPointerDown(event: MouseEvent) {
+  if (!showSuggestions.value) return
+  if (fieldRegion.value?.contains(event.target as Node)) return
+
+  showSuggestions.value = false
+}
+
 function pickRecent(term: string) {
   input.value = term
 }
@@ -414,18 +426,59 @@ function pickSuggestion(suggestion: Suggestion) {
     return
   }
 
+  // A category is a way to browse activities rather than a result in its own
+  // right, so choosing one hands over to Explore with that filter applied.
   router.push({ name: 'explore', query: { category_id: String(suggestion.id) } })
 }
 
+/**
+ * Keep this screen's copy of a relationship in step with a follow from a row.
+ *
+ * The follow store is the source of truth and the row's button already reads
+ * it; this only keeps the map behind the list consistent so a re-render — a new
+ * page, a changed tab — does not paint a stale answer for a frame.
+ */
 function updateRelationship(userId: number, value: FollowRelationship) {
-  relationships.value = {
-    ...relationships.value,
-    [String(userId)]: {
-      is_following: value.is_following,
-      follow_status: value.follow_status,
-      is_followed_by: value.is_followed_by,
-    },
-  }
+  relationships.value = { ...relationships.value, [String(userId)]: { ...value } }
+}
+
+// --- Screen chrome ----------------------------------------------------------
+
+/**
+ * Whether the reader has scrolled far enough for the sticky field to need
+ * separating from the content moving under it.
+ *
+ * At rest the field is part of the page and draws no border, which is what
+ * stops it reading as a navigation bar. It earns its border only once there is
+ * something behind it to sit on top of.
+ */
+const scrolled = ref(false)
+
+function onWindowScroll() {
+  scrolled.value = window.scrollY > 8
+}
+
+onMounted(() => {
+  window.addEventListener('scroll', onWindowScroll, { passive: true })
+  document.addEventListener('mousedown', onDocumentPointerDown)
+})
+
+onBeforeUnmount(() => {
+  clearTimers()
+  window.removeEventListener('scroll', onWindowScroll)
+  document.removeEventListener('mousedown', onDocumentPointerDown)
+})
+
+/**
+ * Leave the search screen.
+ *
+ * Back where there is somewhere to go back to, Home otherwise — a deep link
+ * straight into `/search?q=` has no history entry behind it, and a back button
+ * that does nothing is worse than no back button.
+ */
+function goBack() {
+  if (window.history.length > 1) router.back()
+  else router.push({ name: 'home' })
 }
 
 // A query in the URL on arrival runs immediately — that is what makes a shared
@@ -435,20 +488,48 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
 
 <template>
   <AppLayout>
-    <div class="pb-10">
-      <!-- Sticky search bar. It owns the top of the screen rather than sitting
-           under AppLayout's header row, because on a phone the box has to stay
-           reachable while the results scroll under it. -->
-      <div
-        class="sticky top-0 z-30 bg-surface-muted/95 backdrop-blur border-b border-border/60 px-4 md:px-8 pt-3 pb-2.5"
-      >
-        <h1 class="hidden tablet:block text-xl font-bold text-ink mb-3">Qidiruv</h1>
+    <!-- ONE COLUMN.
+         The header, the field, the tabs and the results share a single centred
+         column and a single left edge. They used to each have their own width
+         and alignment, which is why the title did not look like it belonged to
+         the field beneath it. -->
+    <div class="pb-10 mx-auto w-full max-w-2xl desktop:max-w-3xl">
+      <!-- Mobile screen header. Back first: this is a destination you arrive
+           at from somewhere, and the way out has to be obvious. -->
+      <div class="tablet:hidden flex items-center gap-1 px-2 pt-2 pb-1">
+        <button
+          type="button"
+          class="w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-ink-secondary hover:bg-surface-muted active:bg-surface-muted transition"
+          aria-label="Orqaga"
+          @click="goBack"
+        >
+          <FontAwesomeIcon :icon="icons.back" />
+        </button>
+        <h1 class="text-lg font-bold text-ink">Qidiruv</h1>
+      </div>
 
-        <div class="flex items-center gap-2.5 max-w-2xl">
-          <div class="relative flex-1 min-w-0">
+      <!-- Desktop page header, in the same column as everything below it. -->
+      <div class="hidden tablet:block px-8 pt-10 pb-5">
+        <h1 class="text-3xl font-bold text-ink tracking-tight">Qidiruv</h1>
+        <p class="text-sm text-ink-muted mt-1.5">
+          Faoliyat yoki odam qidiring.
+        </p>
+      </div>
+
+      <!-- The field and the tabs travel together: switching tab is part of
+           searching, so it must stay reachable with the box on a phone.
+           `tablet:static` makes this one element sticky on a phone and an
+           ordinary block on a laptop, so there is one search box in the product
+           rather than two that drift. -->
+      <div
+        class="sticky top-0 z-30 tablet:static bg-surface-muted px-4 tablet:px-8 pt-2 pb-2.5 tablet:pt-0 tablet:pb-0 transition-shadow"
+        :class="scrolled ? 'shadow-[0_1px_0_0_var(--color-border)] tablet:shadow-none' : ''"
+      >
+        <div class="flex items-center gap-2.5">
+          <div ref="fieldRegion" class="relative flex-1 min-w-0">
             <AppSearchInput
               v-model="input"
-              placeholder="Odam, faoliyat yoki kategoriya..."
+              placeholder="Faoliyat yoki odam qidiring..."
               @keyup.enter="submitNow"
               @keyup.escape="showSuggestions = false"
               @blur="dismissSuggestions"
@@ -458,7 +539,7 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
                  it never sits on top of the results it produced. -->
             <ul
               v-if="showSuggestions && suggestions.length"
-              class="absolute z-30 inset-x-0 top-full mt-1 card p-1 max-h-80 overflow-y-auto shadow-lg"
+              class="absolute z-40 inset-x-0 top-full mt-1.5 card p-1 max-h-80 overflow-y-auto shadow-lg"
             >
               <li v-for="s in suggestions" :key="`${s.type}-${s.id}`">
                 <button
@@ -505,49 +586,53 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
           </button>
         </div>
 
-        <!-- Scrolls rather than squeezing. Four equal tabs at 375px leaves
-             "Kategoriyalar" three characters wide. -->
+        <!-- Two tabs, each half the width. They fit at 375px without scrolling
+             or squeezing, which is the whole reason there are two of them. -->
         <div
-          v-if="!isEmpty"
-          class="flex gap-2 overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0 mt-2.5 pb-0.5 max-w-2xl"
+          class="mt-3 grid grid-cols-2 gap-1 p-1 rounded-xl bg-surface border border-border"
+          role="tablist"
         >
           <button
-            v-for="tab in tabs"
+            v-for="tab in TABS"
             :key="tab.value"
             type="button"
-            class="shrink-0 h-9 px-3.5 rounded-full text-sm font-medium transition flex items-center gap-1.5"
+            role="tab"
+            class="h-9 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2"
             :class="
               activeType === tab.value
-                ? 'bg-primary-600 text-white'
-                : 'bg-surface text-ink-muted border border-border hover:border-primary-300'
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'text-ink-muted hover:bg-surface-muted'
             "
-            :aria-pressed="activeType === tab.value"
+            :aria-selected="activeType === tab.value"
             @click="activeType = tab.value"
           >
-            <FontAwesomeIcon :icon="tab.icon" class="text-[11px]" />
+            <FontAwesomeIcon :icon="tab.icon" class="text-xs" />
             {{ tab.label }}
             <span
-              v-if="tab.count"
-              class="text-[11px] tabular-nums"
-              :class="activeType === tab.value ? 'text-white/80' : 'text-ink-faint'"
+              v-if="searched && activeType === tab.value && total > 0"
+              class="text-[11px] tabular-nums text-white/80"
             >
-              {{ tab.count }}
+              {{ total }}
             </span>
           </button>
         </div>
       </div>
 
-      <div class="px-4 md:px-8 pt-4 max-w-2xl">
+      <div class="px-4 tablet:px-8 pt-5">
         <p v-if="tooShort" class="text-xs text-ink-faint mb-3">
           Kamida {{ MIN_SEARCH_LENGTH }} ta belgi kiriting.
         </p>
 
         <!-- Empty box: recent searches instead of a blank screen. -->
         <div v-if="isEmpty">
-          <div v-if="recent.entries.value.length" class="mb-6">
-            <div class="flex items-center justify-between mb-2">
+          <div v-if="recent.entries.value.length" class="mb-7">
+            <div class="flex items-center justify-between mb-2.5">
               <h2 class="text-sm font-semibold text-ink">So'nggi qidiruvlar</h2>
-              <button type="button" class="text-xs text-ink-faint" @click="recent.clear()">
+              <button
+                type="button"
+                class="text-xs text-ink-faint hover:text-ink-muted"
+                @click="recent.clear()"
+              >
                 Tozalash
               </button>
             </div>
@@ -568,20 +653,31 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
             v-else
             :icon="icons.explore"
             title="Nimani qidiryapsiz?"
-            description="Odamlar, faoliyatlar va kategoriyalar bo'yicha qidiring."
+            description="Faoliyat nomi, joyi yoki odamning ismi va @nomi bo'yicha qidiring."
           />
 
-          <!-- What this box can find, said plainly. Search covers people as
-               well as activities and nothing on the screen used to say so. -->
-          <div class="mt-6 grid grid-cols-1 gap-2">
-            <div
+          <!-- What each tab finds, said plainly. Search covers people as well
+               as activities and nothing on the screen used to say so. -->
+          <div class="mt-6 grid grid-cols-1 tablet:grid-cols-2 gap-2.5">
+            <button
               v-for="hint in [
-                { icon: icons.profile, title: 'Odamlar', text: '@nom, ism, qiziqish yoki ko‘nikma' },
-                { icon: icons.date, title: 'Faoliyatlar', text: 'Nom, joy yoki tavsif bo‘yicha' },
-                { icon: icons.category, title: 'Kategoriyalar', text: 'Masalan: gaming, sport, kino' },
+                {
+                  type: 'activities' as SearchTypeKey,
+                  icon: icons.date,
+                  title: 'Faoliyatlar',
+                  text: 'Nom, joy yoki tavsif bo‘yicha',
+                },
+                {
+                  type: 'users' as SearchTypeKey,
+                  icon: icons.profile,
+                  title: 'Odamlar',
+                  text: '@nom, ism, qiziqish yoki ko‘nikma',
+                },
               ]"
               :key="hint.title"
-              class="flex items-center gap-3 rounded-xl bg-surface border border-border px-3.5 py-3"
+              type="button"
+              class="flex items-center gap-3 rounded-2xl bg-surface border border-border px-3.5 py-3 text-left hover:border-primary-300 transition"
+              @click="activeType = hint.type"
             >
               <span
                 class="w-9 h-9 shrink-0 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center"
@@ -592,7 +688,7 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
                 <p class="text-sm font-medium text-ink">{{ hint.title }}</p>
                 <p class="text-xs text-ink-muted truncate">{{ hint.text }}</p>
               </div>
-            </div>
+            </button>
           </div>
         </div>
 
@@ -611,40 +707,39 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
 
         <div v-else-if="noResults">
           <EmptyState
-            :icon="icons.explore"
+            :icon="activeType === 'users' ? icons.profile : icons.date"
             title="Hech narsa topilmadi"
             :description="`&quot;${trimmed}&quot; bo'yicha natija yo'q. Boshqa so'z bilan urinib ko'ring.`"
           />
 
-          <!-- When filters are on, they are the likeliest reason for an empty
-               list — say so and offer the way out. -->
-          <div v-if="filtersApply && activeFilterCount" class="max-w-xs mx-auto -mt-2 space-y-2">
-            <p class="text-xs text-ink-muted text-center">
-              {{ activeFilterCount }} ta filtr qo'llangan.
-            </p>
-            <AppButton variant="outline" @click="applyFilters({ ...filters, date: null, time_of_day: null, payment: null, people_needed: null, min_amount: null, max_amount: null, verified_only: false, region_id: null })">
-              Filtrlarni tozalash
+          <div class="max-w-xs mx-auto -mt-2 space-y-2">
+            <!-- When filters are on, they are the likeliest reason for an empty
+                 list — say so and offer the way out. -->
+            <template v-if="filtersApply && activeFilterCount">
+              <p class="text-xs text-ink-muted text-center">
+                {{ activeFilterCount }} ta filtr qo'llangan.
+              </p>
+              <AppButton variant="outline" @click="clearFilters">Filtrlarni tozalash</AppButton>
+            </template>
+
+            <!-- The other tab is the likeliest next move: somebody searching a
+                 person's name under Activities finds nothing, and retyping it
+                 is the most annoying thing a two-tab search can ask for. -->
+            <AppButton
+              v-else
+              variant="outline"
+              @click="activeType = activeType === 'users' ? 'activities' : 'users'"
+            >
+              {{ activeType === 'users' ? 'Faoliyatlar' : 'Odamlar' }} ichidan qidirish
             </AppButton>
-          </div>
-          <div v-else-if="!isEmpty" class="max-w-xs mx-auto -mt-2">
-            <AppButton variant="outline" @click="clearAll">Qidiruvni tozalash</AppButton>
+
+            <AppButton variant="ghost" @click="clearAll">Qidiruvni tozalash</AppButton>
           </div>
         </div>
 
-        <div v-else-if="searched" class="space-y-6">
-          <section v-if="showUsers && users.length">
-            <div v-if="activeType === 'all'" class="flex items-center justify-between mb-2">
-              <h2 class="text-sm font-semibold text-ink">Odamlar</h2>
-              <button
-                v-if="(counts.users ?? 0) > users.length"
-                type="button"
-                class="text-xs font-medium text-primary-600"
-                @click="activeType = 'users'"
-              >
-                Barchasi ({{ counts.users }})
-              </button>
-            </div>
-            <ul class="space-y-2">
+        <div v-else-if="searched">
+          <ul class="space-y-2">
+            <template v-if="activeType === 'users'">
               <SearchUserResult
                 v-for="user in users"
                 :key="user.id"
@@ -653,55 +748,26 @@ if (trimmed.value.length >= MIN_SEARCH_LENGTH) run()
                 :viewer-id="auth.user?.id ?? null"
                 @update:relationship="(r) => updateRelationship(user.id, r)"
               />
-            </ul>
-          </section>
-
-          <section v-if="showActivities && activities.length">
-            <div v-if="activeType === 'all'" class="flex items-center justify-between mb-2">
-              <h2 class="text-sm font-semibold text-ink">Faoliyatlar</h2>
-              <button
-                v-if="(counts.activities ?? 0) > activities.length"
-                type="button"
-                class="text-xs font-medium text-primary-600"
-                @click="activeType = 'activities'"
-              >
-                Barchasi ({{ counts.activities }})
-              </button>
-            </div>
-            <ul class="space-y-2">
+            </template>
+            <template v-else>
               <SearchActivityResult
                 v-for="activity in activities"
                 :key="activity.id"
                 :activity="activity"
               />
-            </ul>
-          </section>
-
-          <section v-if="showCategories && categories.length">
-            <div v-if="activeType === 'all'" class="flex items-center justify-between mb-2">
-              <h2 class="text-sm font-semibold text-ink">Kategoriyalar</h2>
-              <button
-                v-if="(counts.categories ?? 0) > categories.length"
-                type="button"
-                class="text-xs font-medium text-primary-600"
-                @click="activeType = 'categories'"
-              >
-                Barchasi ({{ counts.categories }})
-              </button>
-            </div>
-            <ul class="space-y-2">
-              <SearchCategoryResult
-                v-for="category in categories"
-                :key="category.id"
-                :category="category"
-              />
-            </ul>
-          </section>
+            </template>
+          </ul>
 
           <!-- Appends rather than replacing: a page-number control is a poor
                target on a phone, and losing your place is worse than a long
                list. -->
-          <AppButton v-if="canLoadMore" variant="outline" :loading="loadingMore" @click="loadMore">
+          <AppButton
+            v-if="canLoadMore"
+            variant="outline"
+            class="mt-4"
+            :loading="loadingMore"
+            @click="loadMore"
+          >
             Ko'proq yuklash
           </AppButton>
         </div>

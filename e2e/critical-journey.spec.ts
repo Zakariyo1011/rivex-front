@@ -24,6 +24,8 @@ test.describe.serial('critical journey', () => {
 
   let activityId: number
   let conversationId: number
+  /** The reply B sends, reused by the reaction test as its target. */
+  let replyTarget: string
 
   test.beforeAll(async ({ browser }) => {
     contextA = await browser.newContext()
@@ -110,6 +112,78 @@ test.describe.serial('critical journey', () => {
 
     // No reload anywhere: this must arrive over the WebSocket.
     await expect(pageA.getByText(message)).toBeVisible()
+  })
+
+  /**
+   * Reply, over the wire, with its quote.
+   *
+   * A reply that arrives as a bare message is a reply that needs a refresh to
+   * be understood — which is the thing realtime exists to avoid. The parent's
+   * text has to travel with it.
+   */
+  test('a reply reaches the other user with its quoted original', async () => {
+    const original = `Asl xabar ${Date.now()}`
+    await pageA.getByPlaceholder('Xabar yozing...').fill(original)
+    await pageA.getByRole('button', { name: 'Yuborish' }).click()
+    await expect(pageB.getByText(original)).toBeVisible()
+
+    // B replies to it through the desktop hover action.
+    //
+    // The action buttons are scoped to their OWN message row. They are
+    // hover-revealed (`opacity-0 pointer-events-none` at rest), so a page-wide
+    // `.first()` resolves to some other message's hidden button and waits
+    // forever for it to become clickable.
+    const originalRow = pageB.locator('[data-message-id]').filter({ hasText: original }).first()
+    await originalRow.hover()
+    await originalRow.getByRole('button', { name: 'Javob berish' }).click()
+
+    // The composer says what is being answered before anything is typed.
+    //
+    // A string, not a regex: Playwright normalises whitespace when matching a
+    // string and does NOT when matching a regex, so an anchored `/ga javob$/`
+    // fails on the template's trailing newline even though the text is right.
+    await expect(pageB.getByText('ga javob')).toBeVisible()
+
+    const answer = `Javob ${Date.now()}`
+    await pageB.getByPlaceholder('Xabar yozing...').fill(answer)
+    await pageB.getByRole('button', { name: 'Yuborish' }).click()
+
+    // A sees the answer AND the quote of their own message inside it.
+    await expect(pageA.getByText(answer)).toBeVisible()
+    await expect(pageA.locator('.border-l-2', { hasText: original }).first()).toBeVisible()
+
+    replyTarget = answer
+  })
+
+  /**
+   * Reactions, both directions, over the wire.
+   *
+   * The delta carries `previous_emoji`, so a *change* must move the reactor
+   * rather than adding them again — without it the badge being left never comes
+   * down and one person appears to hold two opinions.
+   */
+  test('a reaction reaches the other user and can be taken back', async () => {
+    // Scoped to the row, for the same reason as the reply above.
+    const row = pageA.locator('[data-message-id]').filter({ hasText: replyTarget }).first()
+
+    await row.hover()
+    await row.getByRole('button', { name: "Reaksiya qo'shish" }).click()
+    await row.getByRole('button', { name: '👍', exact: true }).click()
+
+    // B sees it appear without reloading.
+    await expect(pageB.getByRole('button', { name: '👍 1' })).toBeVisible()
+
+    // A changes their mind: one badge replaces the other, never both at once.
+    await row.hover()
+    await row.getByRole('button', { name: "Reaksiya qo'shish" }).click()
+    await row.getByRole('button', { name: '❤️', exact: true }).click()
+
+    await expect(pageB.getByRole('button', { name: '❤️ 1' })).toBeVisible()
+    await expect(pageB.getByRole('button', { name: '👍 1' })).toHaveCount(0)
+
+    // And takes it back entirely by tapping the badge they already hold.
+    await row.getByRole('button', { name: '❤️ 1' }).click()
+    await expect(pageB.getByRole('button', { name: '❤️ 1' })).toHaveCount(0)
   })
 
   /**

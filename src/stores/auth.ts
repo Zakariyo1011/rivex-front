@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
 import { useNotificationsStore } from '@/stores/notifications'
+import { useFollowStore } from '@/stores/follows'
 import { disconnectEcho } from '@/composables/useEcho'
 import type {
   FollowCounts,
@@ -63,6 +64,10 @@ export const useAuthStore = defineStore('auth', () => {
     inFlight = null
     localStorage.removeItem('rivex_token')
     useNotificationsStore().reset()
+    // Follow relationships are answers about ONE viewer. Carrying them into the
+    // next session would show the previous account's follow states to whoever
+    // signs in next — wrong, and a small privacy leak.
+    useFollowStore().reset()
     disconnectEcho()
   }
 

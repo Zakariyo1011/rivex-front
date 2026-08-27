@@ -18,17 +18,28 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:relationship': [value: FollowRelationship] }>()
 
 /**
- * A search row carries only the three fields the server resolves in bulk, so
- * the rest are filled in conservatively: a row never claims a follow can be
- * started when it does not know.
+ * The row's relationship, as the server resolved it.
+ *
+ * This used to derive `can_follow` here as "there is no follow row yet", which
+ * is the client answering an authorization question it cannot see the inputs
+ * to: the derivation knows nothing about blocks and nothing about
+ * `who_can_follow`, so a result offered an enabled Follow button for an account
+ * that refuses followers and the tap came back 422. The server now sends the
+ * complete relationship — the same fix follower lists already had — and this
+ * only supplies defaults for a payload that carries none at all, which is the
+ * anonymous case.
  */
-const relationship = computed<FollowRelationship>(() => ({
-  is_following: props.relationship?.is_following ?? false,
-  follow_status: props.relationship?.follow_status ?? null,
-  is_followed_by: props.relationship?.is_followed_by ?? false,
-  can_follow: !props.relationship?.follow_status,
-  follow_needs_approval: false,
-}))
+const relationship = computed<FollowRelationship>(
+  () =>
+    props.relationship ?? {
+      is_following: false,
+      follow_status: null,
+      is_followed_by: false,
+      // Never claim a follow can be started when the server did not say so.
+      can_follow: false,
+      follow_needs_approval: false,
+    },
+)
 
 const isSelf = computed(() => props.viewerId != null && props.viewerId === props.user.id)
 

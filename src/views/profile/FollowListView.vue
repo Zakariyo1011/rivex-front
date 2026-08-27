@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { isAxiosError } from 'axios'
 import AppLayout from '@/layouts/AppLayout.vue'
 import AppTabs from '@/components/ui/AppTabs.vue'
@@ -12,6 +12,7 @@ import Pagination from '@/components/ui/Pagination.vue'
 import VerificationBadge from '@/components/ui/VerificationBadge.vue'
 import FollowButton from '@/components/profile/FollowButton.vue'
 import { followsApi, type FollowListUser } from '@/api/follows'
+import { profileApi } from '@/api/profile'
 import { useAuthStore } from '@/stores/auth'
 import { icons } from '@/lib/icons'
 import type { FollowRelationship } from '@/types'
@@ -25,6 +26,7 @@ import { userProfileRoute } from '@/lib/userLink'
  * places that matter (the empty state, the privacy error, the pagination).
  */
 const route = useRoute()
+const router = useRouter()
 const auth = useAuthStore()
 
 type Tab = 'followers' | 'following' | 'requests'
@@ -163,6 +165,61 @@ async function respond(personId: number, accept: boolean) {
   }
 }
 
+/**
+ * Whose list this is.
+ *
+ * The header said "Kuzatuvlar" for your own and a bare "Profil" for anybody
+ * else's, so opening somebody's follower list gave no indication whose it was —
+ * on a phone, where the profile is not on screen behind it, the screen was
+ * genuinely unidentifiable. The name arrives with the first page rather than
+ * costing a separate request: every row is a person, but the *subject* is not
+ * among them, so it is read from whichever payload knows it.
+ */
+const subjectName = ref<string | null>(null)
+
+/**
+ * Read the subject's display name, once per account viewed.
+ *
+ * Guarded on `isOwner` and on already having it, so switching tabs or paging
+ * does not re-ask — the name does not change between page two and page three.
+ * Failure is silent: the fallback title is already correct-if-vague, and a
+ * screen that cannot show a name is not a screen that should show an error.
+ */
+async function loadSubject() {
+  if (isOwner.value || subjectName.value !== null || !Number.isFinite(userId.value)) return
+
+  try {
+    const { data } = await profileApi.show(userId.value)
+    subjectName.value = data.data.display_name ?? data.data.name ?? null
+  } catch {
+    subjectName.value = null
+  }
+}
+
+const title = computed(() => {
+  if (isOwner.value) return 'Kuzatuvlar'
+
+  return subjectName.value ?? 'Profil'
+})
+
+/**
+ * Leave the list.
+ *
+ * Back where there is history — which is the normal case, since this screen is
+ * reached by tapping a count on a profile — and the subject's profile otherwise,
+ * because that is where the counts live.
+ */
+function goBack() {
+  if (window.history.length > 1) router.back()
+  else router.push({ name: 'user-profile', params: { id: String(userId.value) } })
+}
+
+watch(() => route.params.id, () => {
+  // A different account: the cached name no longer describes this screen.
+  subjectName.value = null
+  void loadSubject()
+})
+
 watch(() => [route.params.id, route.params.tab], () => {
   tab.value = (route.params.tab as Tab) ?? 'followers'
   page.value = 1
@@ -170,16 +227,34 @@ watch(() => [route.params.id, route.params.tab], () => {
 })
 
 load()
+void loadSubject()
 </script>
 
 <template>
   <AppLayout>
-    <div class="px-4 md:px-8 pt-6 md:pt-8 max-w-2xl pb-10">
-      <h1 class="text-xl font-bold text-ink mb-4">
-        {{ isOwner ? 'Kuzatuvlar' : 'Profil' }}
-      </h1>
+    <div class="pb-10">
+      <!-- Mobile screen header. This list is reached by tapping a count on a
+           profile, so the way back to that profile has to be on screen — and
+           the title has to say whose list this is, which it did not: it read a
+           bare "Profil" for everybody who was not you. -->
+      <div class="tablet:hidden flex items-center gap-2 px-2 pt-2 pb-1">
+        <button
+          type="button"
+          class="w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-ink-secondary hover:bg-surface-muted active:bg-surface-muted transition"
+          aria-label="Orqaga"
+          @click="goBack"
+        >
+          <FontAwesomeIcon :icon="icons.back" />
+        </button>
+        <h1 class="text-lg font-bold text-ink flex-1 min-w-0 truncate">{{ title }}</h1>
+      </div>
 
-      <AppTabs :model-value="tab" :tabs="tabs" class="mb-4" @update:model-value="switchTab" />
+      <div class="px-4 tablet:px-8 pt-2 tablet:pt-10 max-w-2xl desktop:max-w-3xl tablet:mx-auto">
+        <h1 class="hidden tablet:block text-3xl font-bold text-ink tracking-tight mb-6">
+          {{ title }}
+        </h1>
+
+        <AppTabs :model-value="tab" :tabs="tabs" class="mb-4" @update:model-value="switchTab" />
 
       <div v-if="loading" class="space-y-3">
         <div v-for="i in 5" :key="i" class="card p-4 flex items-center gap-3">
@@ -267,7 +342,8 @@ load()
           :last-page="lastPage"
           @update:current-page="goToPage"
         />
-      </template>
+        </template>
+      </div>
     </div>
   </AppLayout>
 </template>

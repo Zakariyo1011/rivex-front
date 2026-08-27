@@ -69,8 +69,13 @@ function openProfile() {
 
 <template>
   <div class="flex items-center gap-3 px-3 md:px-8 py-2.5 border-b border-border bg-surface">
+    <!-- The only way out of a conversation on a phone, and it was a 28x31
+         hit box — under every touch-target guideline, on the control people
+         reach for most in this screen. Sized as a proper 40px button; the
+         negative margin keeps the icon where it was so the header does not
+         shift. -->
     <button
-      class="text-ink-muted text-lg md:hidden px-1"
+      class="w-10 h-10 -ml-1.5 shrink-0 rounded-full flex items-center justify-center text-ink-muted text-lg md:hidden hover:bg-surface-muted active:bg-surface-muted transition"
       aria-label="Orqaga"
       @click="router.push({ name: 'chats' })"
     >

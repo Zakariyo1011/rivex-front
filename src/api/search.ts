@@ -1,14 +1,38 @@
 import client from './client'
 import type { ActivityFilters } from './activities'
-import type { Activity, Category, FollowRelationship, User } from '@/types'
+import type { Activity, FollowRelationship, User } from '@/types'
 
-export type SearchTypeKey = 'all' | 'users' | 'activities' | 'categories'
+/**
+ * The two things Rivex searches for.
+ *
+ * It used to be four — `all`, `users`, `activities`, `categories` — rendered as
+ * four tabs. That was the API's shape leaking into the product's: `all` is a
+ * combined preview nobody asked for, and a category is not a *result*, it is a
+ * way to browse activities. Four tabs at 375px also left "Kategoriyalar" three
+ * characters wide.
+ *
+ * Search now has the two axes people actually have in mind when they open it:
+ * find an activity, or find a person. Categories stay reachable from
+ * autocomplete, where picking one deep-links into Explore filtered by it —
+ * which is where browsing by category belongs.
+ *
+ * The server still implements all four types; this is the client narrowing what
+ * it offers, not the API losing a capability.
+ */
+export type SearchTypeKey = 'activities' | 'users'
 
-/** The three fields the server resolves in bulk for a page of people. */
-export type SearchRelationship = Pick<
-  FollowRelationship,
-  'is_following' | 'follow_status' | 'is_followed_by'
->
+/**
+ * The viewer's tie to a person in a search result.
+ *
+ * The COMPLETE relationship, not the three edge fields it used to be. Those
+ * three say enough to *label* a row and not enough to make its button work:
+ * without `can_follow` the client filled it in by deriving "there is no follow
+ * row yet", which ignores blocks and `who_can_follow` entirely — so search
+ * offered an enabled Follow button for an account refusing followers and the
+ * tap came back 422. The server resolves all five in bulk now, exactly as it
+ * already did for follower lists.
+ */
+export type SearchRelationship = FollowRelationship
 
 export interface SearchMeta {
   current_page: number
@@ -25,19 +49,6 @@ export interface SearchPage<T> {
   /** Keyed by user id. Empty object for non-user types. */
   relationships: Record<string, SearchRelationship>
   meta: SearchMeta
-}
-
-/** `type=all`: a preview of each kind, so the client can pick a tab. */
-export interface SearchOverview {
-  query: string
-  type: 'all'
-  results: {
-    users: { data: User[]; total: number }
-    activities: { data: Activity[]; total: number }
-    categories: { data: Category[]; total: number }
-  }
-  relationships: Record<string, SearchRelationship>
-  meta: { counts: Record<SearchTypeKey, number> }
 }
 
 export interface Suggestion {
@@ -59,9 +70,6 @@ export interface Suggestion {
 export const MIN_SEARCH_LENGTH = 2
 
 export const searchApi = {
-  overview(q: string) {
-    return client.get<SearchOverview>('/search', { params: { q, type: 'all' } })
-  },
   users(q: string, page = 1) {
     return client.get<SearchPage<User>>('/search', { params: { q, type: 'users', page } })
   },
@@ -76,11 +84,6 @@ export const searchApi = {
   activities(q: string, page = 1, filters: ActivityFilters = {}) {
     return client.get<SearchPage<Activity>>('/search', {
       params: { ...filters, q, type: 'activities', page },
-    })
-  },
-  categories(q: string, page = 1) {
-    return client.get<SearchPage<Category>>('/search', {
-      params: { q, type: 'categories', page },
     })
   },
   suggest(q: string) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import AppLayout from '@/layouts/AppLayout.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -8,6 +8,7 @@ import ConnectionBanner from '@/components/layout/ConnectionBanner.vue'
 import ChatHeader from '@/components/chat/ChatHeader.vue'
 import MessageBubble from '@/components/chat/MessageBubble.vue'
 import MessageComposer from '@/components/chat/MessageComposer.vue'
+import MessageActionSheet from '@/components/chat/MessageActionSheet.vue'
 import ActivityContext from '@/components/chat/ActivityContext.vue'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
@@ -15,12 +16,15 @@ import { useEchoChannel, type PresenceMember } from '@/composables/useEchoChanne
 import { onEchoReconnect } from '@/composables/useEcho'
 import { usePresence } from '@/composables/usePresence'
 import { useTypingIndicator } from '@/composables/useTypingIndicator'
+import { useToast } from '@/composables/useToast'
 import { formatDate } from '@/lib/datetime'
+import { messagePreviewText } from '@/lib/messagePreview'
 import type { Message } from '@/types'
 
 const route = useRoute()
 const auth = useAuthStore()
 const chat = useChatStore()
+const toast = useToast()
 
 const conversationId = computed(() => Number(route.params.conversationId))
 const scrollArea = ref<HTMLElement | null>(null)
@@ -136,6 +140,21 @@ useEchoChannel(() => (conversationId.value ? `conversation.${conversationId.valu
     },
     '.MessageRead': (payload: { user_id: number; read_at: string; last_read_message_id: number }) =>
       chat.applyReadReceipt(payload),
+
+    /**
+     * Somebody reacted, changed their reaction, or took it back.
+     *
+     * A delta rather than the message's whole reaction list, so a popular
+     * message does not re-send every reactor to every participant on each tap.
+     * The store applies it idempotently — a frame delivered twice across a
+     * reconnect must not double-count.
+     */
+    '.MessageReactionChanged': (payload: {
+      message_id: number
+      user_id: number
+      emoji: string | null
+      previous_emoji: string | null
+    }) => chat.receiveReaction(payload),
   },
 })
 
@@ -189,6 +208,134 @@ async function send(body: string) {
   void scrollToBottom()
 }
 
+// -- replies ----------------------------------------------------------------
+
+/**
+ * Scroll to the message a reply is answering, and say which one it was.
+ *
+ * The highlight is the point. Scrolling alone drops the reader somewhere in the
+ * history with no indication of which message they were sent to — in a run of
+ * similar messages that is no help at all. The ring fades on its own rather
+ * than needing to be dismissed.
+ *
+ * When the original is not loaded — it is older than the pages fetched so far —
+ * this says so instead of scrolling nowhere. Deliberately NOT a fetch: paging
+ * backwards until the message turns up could be many requests for a message
+ * from last month, and a spinner that runs for ten seconds after a tap is worse
+ * than an honest "scroll up to find it".
+ */
+const highlightedId = ref<number | null>(null)
+let highlightTimer: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * How many extra pages to fetch looking for an original that is not loaded.
+ *
+ * Bounded, and low. Paging backwards until the message turns up could be many
+ * requests for a message from last month, and a spinner that runs for ten
+ * seconds after a tap is worse than an honest "scroll up to find it". Three
+ * pages is 150 messages, which covers the overwhelming majority of taps — you
+ * reply to something you can still remember — and costs at most three requests
+ * before this gives up and says so.
+ */
+const JUMP_PAGE_BUDGET = 3
+
+async function jumpToMessage(id: number) {
+  let found = chat.messages.some((m) => m.id === id)
+
+  // Not loaded yet: reach back a little way for it rather than refusing on the
+  // first try. `hasOlder` stops this at the top of the thread, so a message
+  // that genuinely is not there costs fewer than the budget.
+  for (let page = 0; !found && page < JUMP_PAGE_BUDGET && chat.hasOlder; page += 1) {
+    await chat.loadOlder()
+    found = chat.messages.some((m) => m.id === id)
+  }
+
+  if (!found) {
+    toast.info("Asl xabar hali yuklanmagan — yuqoriga suring.")
+
+    return
+  }
+
+  await nextTick()
+
+  const el = scrollArea.value?.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+  if (!el) return
+
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+  highlightedId.value = id
+  clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => (highlightedId.value = null), 1600)
+}
+
+onBeforeUnmount(() => clearTimeout(highlightTimer))
+
+function onReact(message: Message, emoji: string) {
+  void chat.toggleReaction(message, emoji)
+}
+
+// -- mobile actions ---------------------------------------------------------
+
+/**
+ * The message a long press opened the action sheet for.
+ *
+ * Held by the view rather than the bubble so there is exactly one sheet in the
+ * DOM. A sheet per bubble would mean fifty fixed-position overlays in a long
+ * thread, and two of them could be open at once.
+ */
+const actionTarget = ref<Message | null>(null)
+
+function openActions(message: Message) {
+  actionTarget.value = message
+}
+
+function closeActions() {
+  actionTarget.value = null
+}
+
+/**
+ * Put a message's text on the clipboard.
+ *
+ * Offered as an explicit action rather than left to text selection, because
+ * dragging a bubble sideways is a reply and on a mouse that is the same axis a
+ * selection is made on — see MessageBubble. The toast is not decoration: a copy
+ * that succeeds silently is indistinguishable from one that did nothing.
+ *
+ * `writeText` rejects when the document is not focused or the permission is
+ * refused, and on a page served over plain http in some browsers. Those are
+ * ordinary conditions rather than bugs, so they are reported as a failure the
+ * user can act on instead of being swallowed.
+ */
+async function copyMessage(message: Message) {
+  const text = message.body?.trim()
+  if (!text) return
+
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.success('Nusxa olindi.')
+  } catch {
+    toast.error('Nusxa olib bo‘lmadi.')
+  }
+}
+
+function copyFromSheet() {
+  const message = actionTarget.value
+  closeActions()
+  if (message) void copyMessage(message)
+}
+
+function reactFromSheet(emoji: string) {
+  const message = actionTarget.value
+  closeActions()
+  if (message) void chat.toggleReaction(message, emoji)
+}
+
+function replyFromSheet() {
+  const message = actionTarget.value
+  closeActions()
+  if (message) chat.startReply(message)
+}
+
 async function retry(message: Message) {
   await chat.retry(message)
   void scrollToBottom()
@@ -240,9 +387,16 @@ watch(
 
       <ActivityContext v-if="!isGroup" :activities="chat.activities" />
 
+      <!-- `overflow-x-hidden` is load-bearing, not tidiness.
+           Dragging a message to reply translates it sideways, and a message
+           already against its own edge of the screen travels past it. Without
+           this the page itself gains a horizontal scrollbar mid-gesture and the
+           whole conversation shifts. `overscroll-x-contain` is the other half:
+           it keeps a horizontal fling from being handed to the browser as a
+           back-navigation. -->
       <div
         ref="scrollArea"
-        class="flex-1 overflow-y-auto px-3 md:px-8 py-4 space-y-1.5"
+        class="flex-1 overflow-y-auto overflow-x-hidden overscroll-x-contain px-3 md:px-8 py-4 space-y-1.5"
         @scroll.passive="onScroll"
       >
         <p v-if="chat.loadingOlder" class="text-center text-xs text-ink-faint py-2">
@@ -269,14 +423,35 @@ watch(
             </span>
           </div>
 
-          <MessageBubble
-            :message="row.message"
-            :own="row.own"
-            :show-sender="isGroup"
-            :show-tail="row.showTail"
-            :is-last-read="row.message.id === lastReadOwnMessageId"
-            @retry="retry"
-          />
+          <!-- `data-message-id` is what `jumpToMessage` looks up when a reply
+               preview is tapped. A DOM query rather than a ref-per-message: the
+               list is virtual-length and refs would mean one reactive binding
+               per bubble to serve a lookup that happens on a deliberate tap. -->
+          <div
+            :data-message-id="row.message.id"
+            class="rounded-2xl transition-shadow duration-500"
+            :class="
+              highlightedId === row.message.id
+                ? 'ring-2 ring-primary-400 ring-offset-2 ring-offset-surface-muted'
+                : ''
+            "
+          >
+            <MessageBubble
+              :message="row.message"
+              :own="row.own"
+              :show-sender="isGroup"
+              :show-tail="row.showTail"
+              :is-last-read="row.message.id === lastReadOwnMessageId"
+              :my-reaction="chat.myReaction(row.message)"
+              @retry="retry"
+              @discard="chat.discardFailed"
+              @reply="chat.startReply"
+              @react="onReact"
+              @jump="jumpToMessage"
+              @actions="openActions"
+              @copy="copyMessage"
+            />
+          </div>
         </template>
 
         <p v-if="typingLabel" class="text-xs text-ink-muted italic px-1 pt-1">
@@ -284,7 +459,23 @@ watch(
         </p>
       </div>
 
-      <MessageComposer @send="send" @typing="onTyping" />
+      <!-- One sheet for the whole thread — see `actionTarget`. -->
+      <MessageActionSheet
+        v-if="actionTarget"
+        :preview="messagePreviewText(actionTarget)"
+        :current="chat.myReaction(actionTarget)"
+        @react="reactFromSheet"
+        @reply="replyFromSheet"
+        @copy="copyFromSheet"
+        @close="closeActions"
+      />
+
+      <MessageComposer
+        :replying-to="chat.replyingTo"
+        @send="send"
+        @typing="onTyping"
+        @cancel-reply="chat.cancelReply"
+      />
     </div>
   </AppLayout>
 </template>

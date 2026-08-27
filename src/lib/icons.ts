@@ -1,5 +1,8 @@
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import {
+  faReply,
+  faCopy,
+  faFaceSmile,
   faHouse,
   faMagnifyingGlass,
   faFileLines,
@@ -100,6 +103,11 @@ export const icons = {
   more: faEllipsis,
   check: faCheck,
   checkDouble: faCheckDouble,
+  /** Answering one specific message — see MessageBubble. */
+  reply: faReply,
+  copy: faCopy,
+  /** Opens the reaction picker. */
+  emoji: faFaceSmile,
   verified: faCircleCheck,
   edit: faPen,
   chevronRight: faChevronRight,

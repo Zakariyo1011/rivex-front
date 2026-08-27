@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { notificationsApi } from '@/api/notifications'
+import { notificationsApi, type NotificationCategoryKey } from '@/api/notifications'
 import { useEchoChannel } from '@/composables/useEchoChannel'
 import { onEchoReconnect } from '@/composables/useEcho'
 import { useToast } from '@/composables/useToast'
@@ -25,6 +25,16 @@ export const useNotificationsStore = defineStore('notifications', () => {
   const currentPage = ref(1)
   const lastPage = ref(1)
   const unreadOnly = ref(false)
+
+  /**
+   * The category tab being viewed, or null for everything.
+   *
+   * A server-side filter rather than a client-side `.filter()` over the loaded
+   * page, because the list is paginated: filtering locally would show "3
+   * follows" out of the twenty rows that happen to be loaded and silently omit
+   * the rest, which is worse than not offering the tab.
+   */
+  const category = ref<NotificationCategoryKey>(null)
 
   /**
    * The conversation the user is currently reading, if any.
@@ -86,7 +96,10 @@ export const useNotificationsStore = defineStore('notifications', () => {
   async function fetch() {
     loading.value = true
     try {
-      const { data } = await notificationsApi.list({ unread: unreadOnly.value })
+      const { data } = await notificationsApi.list({
+        unread: unreadOnly.value,
+        category: category.value,
+      })
       applyPage(data, false)
     } finally {
       loading.value = false
@@ -101,6 +114,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
       const { data } = await notificationsApi.list({
         page: currentPage.value + 1,
         unread: unreadOnly.value,
+        category: category.value,
       })
       applyPage(data, true)
     } finally {
@@ -108,9 +122,49 @@ export const useNotificationsStore = defineStore('notifications', () => {
     }
   }
 
+  /**
+   * Read the unread count without disturbing the list.
+   *
+   * 🔴 Found in browser QA. The badge is drawn on every screen, and the only
+   * thing that ever populated it was `fetch()` — which ran when the bell's
+   * dropdown was opened. Once the bell became a link to the page (the dropdown
+   * being the thing the notification centre needed to stop being), nothing
+   * fetched the count until the user actually visited `/notifications`. So a
+   * reload anywhere else showed no badge at all while nine notifications sat
+   * unread, and the chat badge beside it — which has had its own loader since
+   * 11.8 — showed its count correctly, which made the missing one look
+   * deliberate.
+   *
+   * `per_page: 1` because only `meta.unread_count` is wanted; the rows are
+   * thrown away. Deliberately does NOT write to `notifications`, `currentPage`
+   * or `loaded`: this runs when the shell mounts, possibly while the page is
+   * showing a filtered list, and overwriting that list with an unfiltered first
+   * page would make the visible feed disagree with its own tabs.
+   *
+   * The chat store's `loadUnreadBadge()` is the same idea, and this is
+   * deliberately shaped like it.
+   */
+  async function loadUnreadBadge() {
+    if (loaded.value) return
+
+    try {
+      const { data } = await notificationsApi.list({ per_page: 1 })
+      unreadCount.value = data.meta.unread_count
+    } catch {
+      // A wrong badge is worse than no badge, so leave it and let the page
+      // itself report the error when it is opened.
+    }
+  }
+
   async function setUnreadOnly(value: boolean) {
     if (unreadOnly.value === value) return
     unreadOnly.value = value
+    await fetch()
+  }
+
+  async function setCategory(value: NotificationCategoryKey) {
+    if (category.value === value) return
+    category.value = value
     await fetch()
   }
 
@@ -149,6 +203,36 @@ export const useNotificationsStore = defineStore('notifications', () => {
       notifications.value.forEach((n, index) => (n.read = previous[index] ?? false))
       unreadCount.value = previous.filter((read) => !read).length
     }
+  }
+
+  /**
+   * Whether a live row belongs in the list as it is currently filtered.
+   *
+   * The client answers this for the *incoming* row only. Which types belong to
+   * which category is the server's decision (see NotificationController), so
+   * this asks the same question the server answered when the page was fetched
+   * rather than keeping a second copy of the grouping that would drift from it.
+   */
+  const CATEGORY_TYPES: Record<string, string[]> = {
+    social: ['new_follower', 'follow_request', 'follow_accepted'],
+    messages: ['new_message'],
+    activities: ['activity_cancelled', 'activity_reminder', 'participant_joined'],
+    applications: ['new_application', 'application_accepted', 'application_rejected'],
+    system: [
+      'payment_successful',
+      'payment_refunded',
+      'withdrawal_resolved',
+      'dispute_resolved',
+      'no_show_reported',
+      'verification_approved',
+      'verification_rejected',
+    ],
+  }
+
+  function matchesCurrentFilter(notification: AppNotification): boolean {
+    if (category.value === null) return true
+
+    return CATEGORY_TYPES[category.value]?.includes(notification.type) ?? true
   }
 
   /**
@@ -194,13 +278,33 @@ export const useNotificationsStore = defineStore('notifications', () => {
       data: payload,
       read: false,
       created_at: new Date().toISOString(),
+
+      // The actor and the viewer's relationship with them, resolved server-side
+      // on the frame itself.
+      //
+      // These used to be absent here, and it showed: a follow arriving while
+      // the app was open rendered with no face, no @handle and no Follow-back
+      // button, and grew them only when the page was reloaded and the REST
+      // endpoint hydrated the row properly. The one notification the product
+      // most wants to be live was the one that needed a refresh.
+      //
+      // Undefined rather than null when the server sent nothing, so a row with
+      // no actor (a refund) renders its event icon rather than an empty avatar
+      // — the template branches on presence.
+      actor: (payload.actor as AppNotification['actor']) ?? undefined,
+      relationship: (payload.relationship as AppNotification['relationship']) ?? undefined,
     }
 
-    // Only prepend to the list the user is actually looking at. An unread item
-    // belongs in both views, so this is really about not corrupting a filtered
-    // list with rows that do not match it — and a new one is always unread.
-    notifications.value.unshift(notification)
+    // The badge counts everything unread regardless of which tab is open, so it
+    // moves whether or not this row belongs in the visible list.
     unreadCount.value += 1
+
+    // Only prepend to the list the user is actually looking at. A new row is
+    // always unread, so the unread filter always admits it; the category filter
+    // may not, and inserting a follow into a list the user has narrowed to
+    // messages would corrupt what that tab claims to be. It is not lost —
+    // switching tabs refetches from the server.
+    if (matchesCurrentFilter(notification)) notifications.value.unshift(notification)
 
     toast.info(notification.title)
   }
@@ -227,6 +331,7 @@ export const useNotificationsStore = defineStore('notifications', () => {
     currentPage.value = 1
     lastPage.value = 1
     unreadOnly.value = false
+    category.value = null
     subscribedUserId.value = null
   }
 
@@ -238,9 +343,12 @@ export const useNotificationsStore = defineStore('notifications', () => {
     loadingMore,
     hasMore,
     unreadOnly,
+    category,
     fetch,
     loadMore,
+    loadUnreadBadge,
     setUnreadOnly,
+    setCategory,
     markRead,
     markAllRead,
     setActiveConversation,

@@ -170,18 +170,81 @@ export interface Application {
   created_at: string
 }
 
+/**
+ * The message a reply answers, trimmed to what a preview needs.
+ *
+ * Flattened by the server rather than nested as another `Message`: a nested
+ * shape recurses (a reply to a reply carrying its own parent, and so on) and
+ * would put an unbounded amount of history on every row.
+ *
+ * `deleted` is the case where the original is gone — the foreign key nulls
+ * rather than cascading, so a reply outlives the message it answered — and then
+ * `id`, `body` and `sender` are all null.
+ */
+export interface MessageReplyPreview {
+  id: number | null
+  deleted: boolean
+  body: string | null
+  /**
+   * The original's kind, so a quote of a picture can say "Rasm" rather than
+   * rendering the empty body a non-text message has. Null when the original is
+   * gone, along with everything else about it.
+   */
+  type: Message['type'] | null
+  sender: User | null
+}
+
+/**
+ * One emoji's worth of reactions on a message.
+ *
+ * `user_ids` rather than a `reacted` boolean, because this exact shape is also
+ * what arrives over the WebSocket, where there is no single viewer to be right
+ * about — the same reason `read_at` is null on a broadcast. Each client decides
+ * which id is its own.
+ */
+export interface MessageReactionGroup {
+  emoji: string
+  count: number
+  user_ids: number[]
+}
+
 export interface Message {
   id: number
   conversation_id: number
   body: string
   type: 'text' | 'image'
   sender: User
+  /** The message this one answers, or null when it answers nothing. */
+  reply_to?: MessageReplyPreview | null
+  /** Per-emoji buckets. Empty rather than absent when nobody has reacted. */
+  reactions?: MessageReactionGroup[]
   /** When the other side read it, or null. Absent on optimistic local rows. */
   read_at?: string | null
   created_at: string
   pending?: boolean
   failed?: boolean
+  /**
+   * Why the send failed, in words meant for the sender.
+   *
+   * Local-only — the server never sends this. Derived by status so that a
+   * block, a rate limit and an offline browser do not all read as the same
+   * unexplained "Yuborilmadi". See `describeApiError`.
+   */
+  failed_reason?: string
 }
+
+/**
+ * The five reactions Rivex offers, in picker order.
+ *
+ * Mirrors `MessageReaction::ALLOWED` server-side, which is authoritative — the
+ * server rejects anything else with a 422. Duplicated here only so the picker
+ * can render without a round trip; it is not a second source of truth, and a
+ * reaction stored before this list last changed still renders, because the
+ * badge row draws whatever the server sends rather than only what is listed.
+ */
+export const MESSAGE_REACTIONS = ['❤️', '😂', '👍', '😮', '😢'] as const
+
+export type MessageReactionEmoji = (typeof MESSAGE_REACTIONS)[number]
 
 /**
  * Whether this viewer may open a conversation with the profile they are looking

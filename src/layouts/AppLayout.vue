@@ -61,6 +61,15 @@ function initForUser() {
 
   notifications.subscribe(auth.user.id)
 
+  // The unread count, read here rather than by the notification page.
+  //
+  // The badge is drawn on every screen and the page is the one screen where it
+  // does not matter — exactly the situation the chat badge below was moved here
+  // to fix. It used to be populated as a side effect of opening the bell's
+  // dropdown, so once the bell became a link the count stayed at zero until the
+  // user visited /notifications.
+  void notifications.loadUnreadBadge()
+
   // The chat badge is read here rather than by the chat list, because the
   // screen that shows the badge is every screen and the one that used to fetch
   // it was the one screen where it does not matter. Signing in on Home used to
