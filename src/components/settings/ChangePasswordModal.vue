@@ -7,7 +7,24 @@ import { authApi } from '@/api/auth'
 import { extractErrorMessage } from '@/composables/useApiError'
 import { useToast } from '@/composables/useToast'
 
+/**
+ * A password is optional now.
+ *
+ * Google is the credential the account rests on; this is a second way in that
+ * a user may choose to add. So the form has two shapes: setting the FIRST
+ * password asks for nothing to re-prove — there is nothing to prove and the
+ * session is the authorisation — while changing an existing one still demands
+ * the current one, so a hijacked session cannot lock the owner out.
+ */
+const props = withDefaults(defineProps<{ hasPassword?: boolean }>(), { hasPassword: true })
+
 const emit = defineEmits<{ close: [] }>()
+
+/** Kept out of the template so the apostrophes do not fight the attribute quoting. */
+const modalTitles = {
+  change: "Parolni o'zgartirish",
+  add: "Parol qo'shish",
+}
 
 const toast = useToast()
 
@@ -20,7 +37,10 @@ const error = ref('')
 // Mirrors the server rule (Password::min(8)) so the user hears about it before
 // a round trip; the server stays the authority.
 const canSubmit = computed(
-  () => current.value.length > 0 && next.value.length >= 8 && next.value === confirm.value,
+  () =>
+    (!props.hasPassword || current.value.length > 0) &&
+    next.value.length >= 8 &&
+    next.value === confirm.value,
 )
 
 const mismatch = computed(() => confirm.value.length > 0 && next.value !== confirm.value)
@@ -32,7 +52,7 @@ async function submit() {
 
   try {
     const { data } = await authApi.changePassword({
-      current_password: current.value,
+      ...(props.hasPassword ? { current_password: current.value } : {}),
       password: next.value,
       password_confirmation: confirm.value,
     })
@@ -48,13 +68,26 @@ async function submit() {
 </script>
 
 <template>
-  <AppModal title="Parolni o'zgartirish" @close="emit('close')">
+  <AppModal
+    :title="props.hasPassword ? modalTitles.change : modalTitles.add"
+    @close="emit('close')"
+  >
     <p class="text-sm text-ink-muted mb-4">
-      Parol o'zgargach boshqa qurilmalardagi seanslar yakunlanadi.
+      {{
+        props.hasPassword
+          ? "Parol o'zgargach boshqa qurilmalardagi seanslar yakunlanadi."
+          : "Google orqali kirish asosiy usul bo'lib qoladi. Parol — qo'shimcha imkoniyat."
+      }}
     </p>
 
     <div class="space-y-3">
-      <AppInput v-model="current" label="Joriy parol" type="password" autocomplete="current-password" />
+      <AppInput
+        v-if="props.hasPassword"
+        v-model="current"
+        label="Joriy parol"
+        type="password"
+        autocomplete="current-password"
+      />
       <AppInput v-model="next" label="Yangi parol" type="password" autocomplete="new-password" />
       <AppInput
         v-model="confirm"

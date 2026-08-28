@@ -39,8 +39,12 @@ export function useVerificationGuard() {
 
     toast.info(refusal.message)
 
+    // `phone-settings`, not the old `verify-phone` onboarding step — the
+    // number moved to the profile when Google took over sign-in, and that
+    // route no longer exists. A guard that pushes a dead route name turns a
+    // handled refusal back into the dead end it exists to prevent.
     router.push({
-      name: refusal.code === 'phone_verification_required' ? 'verify-phone' : 'verification-intro',
+      name: refusal.code === 'phone_verification_required' ? 'phone-settings' : 'verification-intro',
     })
 
     return true

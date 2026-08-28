@@ -28,14 +28,27 @@ const state = computed<BannerState | null>(() => {
   const user = auth.user
   if (!user) return null
 
+  // The phone number is profile data now — asked for here rather than forced
+  // during onboarding, and reached at /settings/phone rather than at the
+  // deleted `verify-phone` step. The copy changes with the state: somebody who
+  // has never added a number is being asked for a different thing from
+  // somebody whose number is waiting on a code.
   if (!user.phone_verified) {
+    // `onboarding.phone_status`, not the phone state object: this banner has
+    // no business touching a phone NUMBER, and reading the checklist field
+    // keeps it that way — see src/__tests__/privacy.spec.ts.
+    const status = auth.onboarding?.phone_status ?? 'not_added'
+
     return {
       tone: 'warning',
       icon: icons.phone,
-      title: 'Telefon raqamingizni tasdiqlang',
-      body: "Faoliyat yaratish va ariza yuborish uchun kerak.",
-      action: 'Tasdiqlash',
-      to: { name: 'verify-phone' },
+      title:
+        status === 'not_added'
+          ? "Telefon raqamingizni qo'shing"
+          : 'Telefon raqamingizni tasdiqlang',
+      body: 'Faoliyat yaratish va ariza yuborish uchun kerak.',
+      action: status === 'not_added' ? "Qo'shish" : 'Tasdiqlash',
+      to: { name: 'phone-settings' },
     }
   }
 

@@ -21,8 +21,13 @@ export interface User {
    * admin panel). Embedded and broadcast payloads carry the `phone_verified`
    * badge instead — never the number.
    */
-  phone?: string
+  phone?: string | null
   phone_verified: boolean
+  /**
+   * Present only for the owner and for admins, like `phone`. Google supplies
+   * it at sign-up, so it is the identifier support is usually given.
+   */
+  email?: string | null
   identity_verified: boolean
   /** Coarse status only — no document, number or file ever reaches the client. */
   verification_status: KycStatus
@@ -133,7 +138,17 @@ export interface Activity {
   /** Owner-only, and only on the "my activities" endpoint. */
   pending_applications_count?: number
   payment_type: PaymentType
+  /** The peer-to-peer price the two people agreed on. */
+  amount_minor: number
   amount: number
+  amount_formatted: string
+  currency: string
+  /**
+   * What Rivex would charge on this activity at today's rate. Present only
+   * where the caller is about to act on the price — the detail screen, and the
+   * response to creating or editing one.
+   */
+  pricing?: PaymentBreakdown
   status: ActivityStatus
   owner_confirmed_completed_at: string | null
   cancellation_reason: CancellationReason | null
@@ -349,25 +364,80 @@ export interface Review {
   created_at: string
 }
 
+/**
+ * Every money figure arrives twice.
+ *
+ * `*_minor` is the exact integer the server reasons about — the amount in the
+ * currency's smallest unit. The plain field is the same value in major units,
+ * for display. The client never divides one into the other: a currency with a
+ * different exponent is how that becomes a hundredfold bug, and only the server
+ * knows the exponent.
+ *
+ * UZS has no subunit, so for now the two are equal. That is a fact about UZS,
+ * not an invariant to rely on.
+ */
 export interface Wallet {
+  currency: string
   /** Spendable right now. */
+  balance_minor: number
   balance: number
+  balance_formatted: string
   /** Reserved against withdrawal requests finance has not settled yet. */
+  pending_balance_minor: number
   pending_balance: number
+  available_balance_minor: number
   available_balance: number
   /** balance + pending_balance — everything Rivex owes the user. */
+  total_balance_minor: number
   total_balance: number
+  min_withdrawal_minor: number
   min_withdrawal: number
-  currency: string
+  /**
+   * Whether this is simulated money. Comes from the SERVER, never from a build
+   * flag — the truth about whether a balance is real is not the client's to
+   * decide, and every screen that shows a number must be able to say so.
+   */
+  test_mode: boolean
+  /** Whether the test top-up button should exist at all. */
+  can_top_up: boolean
 }
 
 /** What a ledger entry was caused by. */
-export type WalletReferenceType = 'payment' | 'invoice' | 'withdrawal' | string
+export type WalletReferenceType = 'payment' | 'invoice' | 'withdrawal' | 'test_top_up' | string
+
+/**
+ * What a ledger row IS, as opposed to which way the money went.
+ *
+ * The client used to derive this from the description string, which meant a
+ * copy change silently broke the icons. It is a server-side enum now.
+ */
+export type WalletTransactionType =
+  | 'test_top_up'
+  | 'activity_fee'
+  | 'activity_reservation'
+  | 'commission'
+  | 'settlement'
+  | 'refund'
+  | 'adjustment'
+  | 'withdrawal'
+  | 'withdrawal_reversal'
+
+export type LedgerDirection = 'credit' | 'debit'
+
+export type WalletTransactionStatus = 'pending' | 'completed' | 'reversed' | 'failed'
 
 export interface WalletTransaction {
   id: number
-  type: 'credit' | 'debit'
+  direction: LedgerDirection
+  type: WalletTransactionType
+  /** Already localised by the server, so one label exists rather than two. */
+  type_label: string
+  status: WalletTransactionStatus
+  amount_minor: number
   amount: number
+  amount_formatted: string
+  currency: string
+  balance_after_minor: number
   balance_after: number
   reference_type: WalletReferenceType | null
   reference_id: number | null
@@ -375,8 +445,40 @@ export interface WalletTransaction {
   created_at: string
 }
 
+/**
+ * How one activity's money divides.
+ *
+ * Computed entirely on the server: the client must never multiply a percentage
+ * to work out a fee, or the number on screen and the number billed can differ.
+ *
+ * `platform_collected` is what actually moves through Rivex (today: the
+ * commission alone) and `external_settled` is what the two people settle
+ * between themselves. Keeping them apart is what lets the payment model change
+ * later without rewriting every screen that shows a price.
+ */
+export interface PaymentBreakdown {
+  currency: string
+  activity_amount_minor: number
+  activity_amount: number
+  commission_rate: number
+  commission_minor: number
+  commission: number
+  platform_collected_minor: number
+  platform_collected: number
+  external_settled_minor: number
+  external_settled: number
+  settlement_minor: number
+  settlement: number
+}
+
+/**
+ * `paid` is the completed/captured state — the only one in which money has
+ * reached Rivex. It kept its original name because it is written into every
+ * existing row; `authorized` is a genuinely different state, where a gateway
+ * has reserved funds it has not captured.
+ */
 export type PaymentStatus =
-  'pending' | 'waiting_for_payment' | 'paid' | 'failed' | 'cancelled' | 'refunded'
+  'pending' | 'waiting_for_payment' | 'authorized' | 'paid' | 'failed' | 'cancelled' | 'refunded'
 
 /** Invoices additionally lapse at their due date. */
 export type InvoiceStatus = PaymentStatus | 'expired'
@@ -388,11 +490,20 @@ export interface Payment {
   invoice_id: number | null
   activity_id: number
   /** In the commission-only model this is the platform fee, not the activity price. */
+  amount_minor: number
   amount: number
-  payment_type: PaymentType
+  amount_formatted: string
+  currency: string
+  /** Where that figure came from. Always server-computed. */
+  breakdown: PaymentBreakdown
+  payment_type: PaymentType | null
   status: PaymentStatus
-  payer: User
-  recipient: User | null
+  provider: string | null
+  failure_reason: string | null
+  authorized_at: string | null
+  completed_at: string | null
+  refunded_at: string | null
+  /** Only present when a redirect-based gateway returned one on this request. */
   checkout_url?: string | null
   created_at: string
 }
@@ -402,9 +513,14 @@ export interface Invoice {
   invoice_number: string
   activity_id: number
   activity?: Activity
+  /** What Rivex charges — the platform fee, not the activity price. */
+  amount_minor: number
   amount: number
+  amount_formatted: string
   commission_rate: number
   currency: string
+  /** The whole split the fee was calculated from. */
+  breakdown: PaymentBreakdown
   status: InvoiceStatus
   due_at: string | null
   paid_at: string | null
@@ -494,8 +610,22 @@ export interface UsernamePolicy {
   max: number
 }
 
+/** Not added / awaiting a code / on the account / proved. */
+export type PhoneStatus = 'not_added' | 'pending' | 'unverified' | 'verified'
+
+export interface PhoneState {
+  status: PhoneStatus
+  phone: string | null
+  pending_phone: string | null
+  verified: boolean
+  /** Pre-spaced by the server, so the client never encodes a numbering plan. */
+  formatted?: string | null
+  pending_formatted?: string | null
+}
+
 export interface OnboardingState {
-  phone_verified: boolean
+  /** Google is the authentication method, so this is true for every account. */
+  google_linked: boolean
   location_selected: boolean
   /**
    * A handle is required to take part socially — to be findable, followed or
@@ -503,8 +633,35 @@ export interface OnboardingState {
    * accounts created before handles existed keep working while they are asked.
    */
   username_set: boolean
+  /**
+   * Reported for the profile checklist, NOT a gate.
+   *
+   * The phone number moved to the profile when Google took over sign-in, so it
+   * is enforced only at the point of action — creating or joining an activity —
+   * and never by the onboarding guard. Putting an SMS between a new user and
+   * the product was the thing this phase removed.
+   */
+  phone_status: PhoneStatus
+  phone_verified: boolean
   identity_status: KycStatus
   completed: boolean
+}
+
+/** The balance summary served beside /me, so the profile needs no second call. */
+export interface WalletSummary {
+  balance_minor: number
+  balance: number
+  currency: string
+  test_mode: boolean
+}
+
+/** What the security screen needs to know to render the right form. */
+export interface SecurityOverview {
+  google_linked: boolean
+  google_email: string | null
+  has_password: boolean
+  phone_status: PhoneStatus
+  active_sessions: number
 }
 
 export interface Withdrawal {
@@ -573,6 +730,9 @@ export interface AdminRoleOption {
 
 export interface DashboardStats {
   total_users: number
+  new_users_today: number
+  new_users_this_week: number
+  new_users_this_month: number
   verified_users: number
   activities_today: number
   completed_activities: number
@@ -585,6 +745,142 @@ export interface DashboardStats {
   pending_withdrawals: number
   pending_reports: number
   pending_verifications: number
+}
+
+/**
+ * A money figure as the admin API sends it: exact, displayable and labelled.
+ *
+ * The same three-part shape everywhere, so no admin screen has to decide how
+ * to render an amount and none of them can decide differently.
+ */
+export interface AdminMoney {
+  minor: number
+  major: number
+  formatted: string
+  currency: string
+}
+
+/**
+ * Every financial number the admin panel shows, computed from the database.
+ *
+ * `test_mode` and `gateway` are part of the payload rather than assumed by the
+ * client: an administrator looking at revenue has to be able to tell simulated
+ * money from real, and that is a fact about the server.
+ */
+export interface FinancialOverview {
+  currency: string
+  test_mode: boolean
+  gateway: string
+  commission_rate: number
+  users: {
+    total: number
+    today: number
+    this_week: number
+    this_month: number
+  }
+  test_money: {
+    total_added: AdminMoney
+    today: AdminMoney
+    wallet_balance: AdminMoney
+    wallet_pending: AdminMoney
+  }
+  volume: {
+    total: AdminMoney
+    today: AdminMoney
+    this_week: AdminMoney
+    this_month: AdminMoney
+  }
+  commission: {
+    total: AdminMoney
+    today: AdminMoney
+    this_week: AdminMoney
+    this_month: AdminMoney
+    reversed: AdminMoney
+  }
+  transactions: {
+    wallet_movements: number
+    payments_total: number
+    payments_successful: number
+    payments_failed: number
+    payments_pending: number
+    refunds: number
+  }
+}
+
+export interface FinancialSeriesPoint {
+  date: string
+  registrations: number
+  test_volume_minor: number
+  test_volume: number
+  commission_minor: number
+  commission: number
+}
+
+export interface FinancialSeries {
+  currency: string
+  days: number
+  points: FinancialSeriesPoint[]
+}
+
+export interface AdminWalletRow {
+  id: number
+  user: { id: number | null; name: string | null; username: string | null; email: string | null }
+  currency: string
+  balance: AdminMoney
+  pending_balance: AdminMoney
+  total_top_ups: AdminMoney
+  total_spent: AdminMoney
+  transactions_count: number
+}
+
+/** A ledger row plus who it belongs to and its idempotency reference. */
+export interface AdminWalletTransaction extends WalletTransaction {
+  wallet_id: number
+  user: { id: number; name: string; username: string | null; email: string | null } | null
+  /** Admin-only: the key that de-duplicates a movement. */
+  reference: string | null
+  metadata: Record<string, unknown> | null
+}
+
+export interface AdminPaymentRow {
+  id: number
+  user: { id: number | null; name: string | null; username: string | null }
+  activity: { id: number; title: string } | null
+  invoice_number: string | null
+  amount: { minor: number; major: number; formatted: string }
+  breakdown: PaymentBreakdown
+  currency: string
+  status: PaymentStatus
+  provider: string | null
+  reference: string | null
+  failure_reason: string | null
+  created_at: string
+  completed_at: string | null
+  refunded_at: string | null
+}
+
+export interface AdminUserFinancials {
+  currency: string
+  test_mode: boolean
+  wallet: { exists: boolean; balance: AdminMoney; pending_balance: AdminMoney }
+  totals: {
+    test_top_ups: AdminMoney
+    spent: AdminMoney
+    refunded: AdminMoney
+    commission_generated: AdminMoney
+  }
+  counts: {
+    wallet_transactions: number
+    payments: number
+    payments_successful: number
+    refunds: number
+  }
+}
+
+export interface TransactionFilters {
+  types: { value: WalletTransactionType; label: string }[]
+  directions: LedgerDirection[]
+  statuses: WalletTransactionStatus[]
 }
 
 export type FollowStatus = 'accepted' | 'pending'

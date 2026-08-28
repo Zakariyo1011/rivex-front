@@ -9,13 +9,14 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import ChangePasswordModal from '@/components/settings/ChangePasswordModal.vue'
-import ChangePhoneModal from '@/components/settings/ChangePhoneModal.vue'
+import PhoneNumberCard from '@/components/profile/PhoneNumberCard.vue'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
 import { setStoredLocale, type Locale } from '@/i18n'
 import { icons } from '@/lib/icons'
+import { formatTestAware } from '@/lib/money'
 import { extractErrorMessage } from '@/composables/useApiError'
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -52,10 +53,26 @@ const links = computed(() => [
   { to: '/safety-center', icon: icons.trust, label: t('settings.safetyCenter') },
 ])
 
+// Which delete confirmation to render, and whether the password row says
+// "change" or "add", both depend on this. Fetched here rather than served with
+// /me — see the store.
+onMounted(() => {
+  void auth.fetchSecurity().catch(() => undefined)
+})
+
 const showDeleteModal = ref(false)
 const showPasswordModal = ref(false)
-const showPhoneModal = ref(false)
+
+/**
+ * Deleting a Google-only account is confirmed by typing the handle back —
+ * there is no password to re-prove. Both inputs exist and the server decides
+ * which one it needs, because only the server knows whether a password was
+ * ever set.
+ */
 const deletePassword = ref('')
+const deleteConfirmation = ref('')
+
+const hasPassword = computed(() => auth.security?.has_password ?? false)
 
 const verificationLabel = computed(() => {
   switch (auth.user?.verification_status) {
@@ -82,7 +99,11 @@ async function confirmDeleteAccount() {
   deleteError.value = ''
   deleting.value = true
   try {
-    await auth.deleteAccount(deletePassword.value)
+    await auth.deleteAccount(
+      hasPassword.value
+        ? { password: deletePassword.value }
+        : { confirmation: deleteConfirmation.value },
+    )
     router.push({ name: 'welcome' })
   } catch (e) {
     deleteError.value = extractErrorMessage(e)
@@ -142,10 +163,47 @@ async function confirmDeleteAccount() {
           </span>
           <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
         </RouterLink>
+
+        <RouterLink
+          :to="{ name: 'wallet' }"
+          class="flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition"
+        >
+          <span class="flex items-center gap-3 text-sm font-medium text-ink">
+            <FontAwesomeIcon :icon="icons.wallet" class="text-ink-faint w-4" />
+            Hamyon
+          </span>
+          <span class="flex items-center gap-2">
+            <span v-if="auth.wallet" class="text-sm text-ink-muted">
+              {{ formatTestAware(auth.wallet.balance, auth.wallet.currency, auth.wallet.test_mode) }}
+            </span>
+            <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+          </span>
+        </RouterLink>
       </AppCard>
 
       <AppCard class="mb-4" padding="none">
         <h2 class="font-semibold text-ink p-4 pb-2">Xavfsizlik</h2>
+
+        <!-- How this account signs in. Read-only: Google IS the credential,
+             and there is nothing here to change. -->
+        <div class="flex items-center justify-between px-4 py-3.5 border-t border-border">
+          <span class="flex items-center gap-3 text-sm font-medium text-ink min-w-0">
+            <FontAwesomeIcon :icon="icons.verified" class="text-ink-faint w-4 shrink-0" />
+            <span class="truncate">Google hisobi</span>
+          </span>
+          <span class="flex items-center gap-2 shrink-0 min-w-0">
+            <span class="text-sm text-ink-muted truncate max-w-[10rem]">
+              {{ auth.security?.google_email ?? auth.user?.name }}
+            </span>
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-success-bg text-success">
+              Ulangan
+            </span>
+          </span>
+        </div>
+
+        <div class="border-t border-border">
+          <PhoneNumberCard compact />
+        </div>
 
         <button
           class="w-full flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition text-left"
@@ -153,21 +211,10 @@ async function confirmDeleteAccount() {
         >
           <span class="flex items-center gap-3 text-sm font-medium text-ink">
             <FontAwesomeIcon :icon="icons.lock" class="text-ink-faint w-4" />
-            Parolni o'zgartirish
+            {{ hasPassword ? "Parolni o'zgartirish" : "Parol qo'shish" }}
           </span>
-          <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
-        </button>
-
-        <button
-          class="w-full flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition text-left"
-          @click="showPhoneModal = true"
-        >
-          <span class="flex items-center gap-3 text-sm font-medium text-ink min-w-0">
-            <FontAwesomeIcon :icon="icons.phone" class="text-ink-faint w-4 shrink-0" />
-            <span class="truncate">Telefon raqam</span>
-          </span>
-          <span class="flex items-center gap-2 shrink-0">
-            <span class="text-sm text-ink-muted">{{ auth.user?.phone }}</span>
+          <span class="flex items-center gap-2">
+            <span v-if="!hasPassword" class="text-xs text-ink-faint">Ixtiyoriy</span>
             <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
           </span>
         </button>
@@ -226,15 +273,29 @@ async function confirmDeleteAccount() {
       </AppCard>
     </div>
 
-    <ChangePasswordModal v-if="showPasswordModal" @close="showPasswordModal = false" />
-    <ChangePhoneModal v-if="showPhoneModal" @close="showPhoneModal = false" />
+    <ChangePasswordModal
+      v-if="showPasswordModal"
+      :has-password="hasPassword"
+      @close="showPasswordModal = false"
+    />
 
     <AppModal v-if="showDeleteModal" :title="t('settings.deleteAccount')" @close="showDeleteModal = false">
       <p class="text-sm text-ink-secondary mb-4">
         Bu amalni bekor qilib bo'lmaydi. Hisobingiz, faoliyatlaringiz va suhbatlaringizga kirish imkoniyati butunlay
-        yo'qoladi. Davom etish uchun parolingizni kiriting.
+        yo'qoladi.
+        {{
+          hasPassword
+            ? 'Davom etish uchun parolingizni kiriting.'
+            : "Davom etish uchun foydalanuvchi nomingizni yozing."
+        }}
       </p>
-      <AppInput v-model="deletePassword" label="Parol" type="password" />
+      <AppInput v-if="hasPassword" v-model="deletePassword" label="Parol" type="password" />
+      <AppInput
+        v-else
+        v-model="deleteConfirmation"
+        label="Foydalanuvchi nomi"
+        :placeholder="auth.user?.username ?? auth.user?.name"
+      />
       <p v-if="deleteError" class="text-sm text-danger mt-2">{{ deleteError }}</p>
       <AppButton class="mt-4" variant="danger" :loading="deleting" @click="confirmDeleteAccount">
         Hisobni butunlay o'chirish

@@ -6,6 +6,10 @@ import { icons } from '@/lib/icons'
 import { useAuthStore } from '@/stores/auth'
 import { useProfileSectionsStore } from '@/stores/profileSections'
 import { locationsApi } from '@/api/locations'
+import AppCard from '@/components/ui/AppCard.vue'
+import PhoneNumberCard from '@/components/profile/PhoneNumberCard.vue'
+import { formatTestAware } from '@/lib/money'
+import { computed } from 'vue'
 
 /**
  * Your own profile, as a profile — not as a form.
@@ -24,6 +28,20 @@ const sections = useProfileSectionsStore()
 
 const regionName = ref<string | null>(null)
 const districtName = ref<string | null>(null)
+
+const identity = computed(() => {
+  switch (auth.user?.verification_status) {
+    case 'verified':
+      return { label: 'Tasdiqlangan', class: 'bg-success-bg text-success' }
+    case 'pending':
+    case 'needs_review':
+      return { label: 'Tekshirilmoqda', class: 'bg-warning-bg text-warning' }
+    case 'rejected':
+      return { label: 'Rad etilgan', class: 'bg-danger-bg text-danger' }
+    default:
+      return { label: 'Tasdiqlanmagan', class: 'bg-surface-muted text-ink-muted' }
+  }
+})
 
 onMounted(async () => {
   await auth.fetchMe()
@@ -73,7 +91,16 @@ onMounted(async () => {
              flow this phase removes. It is an identity here, not a control. -->
         <p v-if="auth.user?.username" class="text-sm text-ink-faint">@{{ auth.user.username }}</p>
 
-        <p class="text-sm text-ink-muted">{{ auth.user?.phone }}</p>
+        <!-- Google, as a badge. It is how this account exists, so it belongs
+             beside the identity rather than buried in Settings. -->
+        <p class="text-xs text-ink-muted mt-1.5 inline-flex items-center gap-1.5">
+          <span
+            class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-surface-muted text-ink-secondary font-medium"
+          >
+            <FontAwesomeIcon :icon="icons.verified" class="text-[0.6rem] text-success" />
+            Google
+          </span>
+        </p>
 
         <div
           v-if="auth.followCounts && auth.user"
@@ -180,6 +207,63 @@ onMounted(async () => {
           <p v-if="auth.user?.profile.age" class="text-ink-muted">{{ auth.user.profile.age }} yosh</p>
         </div>
       </div>
+
+      <!-- Account: the things this profile IS, as opposed to what it shows.
+           Phone, identity and wallet live together because they are the three
+           facts that decide what the account may do. -->
+      <AppCard class="mt-4" padding="none">
+        <h2 class="font-semibold text-ink p-4 pb-2">Hisob ma'lumotlari</h2>
+
+        <div class="border-t border-border">
+          <PhoneNumberCard compact />
+        </div>
+
+        <RouterLink
+          to="/verification"
+          class="flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition"
+        >
+          <span class="flex items-center gap-3 min-w-0">
+            <FontAwesomeIcon :icon="icons.identity" class="text-ink-faint w-4 shrink-0" />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium text-ink">Shaxsni tasdiqlash</span>
+              <span class="block text-sm text-ink-muted truncate">Pasport yoki ID karta</span>
+            </span>
+          </span>
+          <span class="flex items-center gap-2 shrink-0">
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full" :class="identity.class">
+              {{ identity.label }}
+            </span>
+            <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+          </span>
+        </RouterLink>
+
+        <RouterLink
+          :to="{ name: 'wallet' }"
+          class="flex items-center justify-between px-4 py-3.5 border-t border-border hover:bg-surface-muted transition"
+          data-testid="profile-wallet-link"
+        >
+          <span class="flex items-center gap-3 min-w-0">
+            <FontAwesomeIcon :icon="icons.wallet" class="text-ink-faint w-4 shrink-0" />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium text-ink">Hamyon</span>
+              <span v-if="auth.wallet" class="block text-sm text-ink-muted truncate">
+                {{
+                  formatTestAware(auth.wallet.balance, auth.wallet.currency, auth.wallet.test_mode)
+                }}
+              </span>
+            </span>
+          </span>
+          <span class="flex items-center gap-2 shrink-0">
+            <span
+              v-if="auth.wallet?.test_mode"
+              class="text-xs font-medium px-2 py-0.5 rounded-full bg-warning-bg text-warning"
+            >
+              TEST
+            </span>
+            <FontAwesomeIcon :icon="icons.chevronRight" class="text-ink-faint text-xs" />
+          </span>
+        </RouterLink>
+      </AppCard>
 
       <!-- Interests, skills, hobbies, languages and the rest, exactly as
            another person would see them. -->

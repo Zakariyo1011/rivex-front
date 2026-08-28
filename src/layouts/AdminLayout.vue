@@ -24,6 +24,8 @@ const allItems = [
   { name: 'admin-reports', label: 'Reports', icon: icons.report, permission: 'reports.view' },
   { name: 'admin-verifications', label: 'Verification', icon: icons.identity, permission: 'verification.view' },
   { name: 'admin-disputes', label: 'Disputes', icon: icons.trust, permission: 'disputes.view' },
+  { name: 'admin-wallets', label: 'Wallets', icon: icons.wallet, permission: 'finance.view' },
+  { name: 'admin-transactions', label: 'Transactions', icon: icons.receipt, permission: 'finance.view' },
   { name: 'admin-withdrawals', label: 'Withdrawals', icon: icons.amount, permission: 'withdrawals.view' },
   { name: 'admin-settings', label: 'Settings', icon: icons.settings, permission: 'settings.view' },
   { name: 'admin-audit-logs', label: 'Audit Logs', icon: icons.auditLog, permission: 'audit-logs.view' },

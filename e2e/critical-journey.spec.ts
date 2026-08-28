@@ -33,8 +33,8 @@ test.describe.serial('critical journey', () => {
     pageA = await contextA.newPage()
     pageB = await contextB.newPage()
 
-    tokenA = await loginAs(pageA, USERS.a.phone)
-    tokenB = await loginAs(pageB, USERS.b.phone)
+    tokenA = await loginAs(pageA, USERS.a.code)
+    tokenB = await loginAs(pageB, USERS.b.code)
   })
 
   test.afterAll(async () => {
@@ -213,19 +213,49 @@ test.describe.serial('critical journey', () => {
       .toBe(true)
   })
 
-  test('B pays the commission and the wallet updates live', async () => {
-    const invoices = await api<{ data: { id: number; amount: number }[] }>(
-      pageB,
-      tokenB,
-      `/invoices?activity_id=${activityId}`,
-    )
-    const invoice = invoices.data[0]
-    expect(invoice, 'the participant should owe a commission invoice').toBeTruthy()
+  /**
+   * The wallet, as a person actually uses it.
+   *
+   * Driven through the UI rather than the API because the thing being proved
+   * is not that the endpoint works — MockPaymentTest covers that — but that a
+   * user can find the button, see the money arrive, and be told in the same
+   * breath that it is not real.
+   */
+  test('B tops up the test wallet from the wallet screen', async () => {
+    await pageB.goto('/wallet')
 
-    await api(pageB, tokenB, `/invoices/${invoice.id}/pay`, { method: 'POST' })
+    // The single most important assertion in this file: whatever else the
+    // screen says, it must say this money is simulated.
+    await expect(pageB.getByTestId('test-mode-banner')).toBeVisible()
+    await expect(pageB.getByTestId('wallet-balance')).toContainText('TEST UZS')
 
-    // A refund is what puts money in a wallet, so the balance is asserted after
-    // the dispute below. Here we only prove the payment settled.
+    const before = (await pageB.getByTestId('wallet-balance').textContent()) ?? ''
+
+    await pageB.getByTestId('top-up-button').click()
+    await pageB.getByTestId('top-up-amount').fill('100000')
+    await pageB.getByTestId('top-up-submit').click()
+
+    // The ledger row appears with the balance, because both come from the same
+    // response — a balance that moved without a transaction behind it is the
+    // state this whole system is designed to make impossible.
+    await expect(pageB.getByText("Test balans to'ldirildi").first()).toBeVisible()
+    await expect(pageB.getByTestId('wallet-balance')).not.toHaveText(before)
+  })
+
+  test('B pays the commission and sees what is actually being charged', async () => {
+    await pageB.goto(`/activities/${activityId}`)
+
+    // The confusion this screen exists to prevent: a 100 000 activity does NOT
+    // charge 100 000. The summary has to show the fee as the total.
+    const summary = pageB.getByTestId('payment-summary').first()
+    await expect(summary).toBeVisible()
+    await expect(summary).toContainText('100 000')
+    await expect(pageB.getByTestId('payment-total')).toContainText('5 000')
+
+    await pageB.getByTestId('pay-invoice').click()
+
+    await expect(pageB.getByTestId('invoice-paid')).toBeVisible()
+
     const payments = await api<{ data: unknown[] }>(pageB, tokenB, '/wallet/transactions')
     expect(payments).toBeTruthy()
   })
@@ -262,6 +292,40 @@ test.describe.serial('critical journey', () => {
     await expect(pageB.getByText('+5 000').first()).toBeVisible()
   })
 
+  /**
+   * The phone number, now that it is profile data rather than a credential.
+   *
+   * The seeded users already have one, so this proves the row renders its
+   * verified state and that the number is reachable from the profile — which
+   * is the whole point of the move.
+   */
+  test('the phone number lives on the profile, not on the sign-in screen', async () => {
+    await pageA.goto('/profile')
+
+    const row = pageA.getByTestId('phone-row').first()
+    await expect(row).toBeVisible()
+    await expect(row).toContainText('Telefon raqami')
+    await expect(row).toContainText('Tasdiqlangan')
+
+    // And the wallet is reachable from the same card.
+    await expect(pageA.getByTestId('profile-wallet-link')).toContainText('TEST UZS')
+
+    // Nothing on the sign-in screen asks for a number any more.
+    //
+    // A FRESH context, not another tab: `/auth/login` is a guest route, so an
+    // authenticated session is redirected straight home by the router guard —
+    // which is correct behaviour, and would make this assertion test nothing.
+    const guestContext = await pageA.context().browser()!.newContext()
+    const signIn = await guestContext.newPage()
+
+    await signIn.goto('/auth/login')
+    await expect(signIn.getByTestId('google-sign-in')).toBeVisible()
+    await expect(signIn.locator('input[autocomplete="tel"]')).toHaveCount(0)
+    await expect(signIn.locator('input[type="password"]')).toHaveCount(0)
+
+    await guestContext.close()
+  })
+
   test('an admin can resolve disputes and a moderator cannot approve payouts', async () => {
     const adminContext = await pageA.context().browser()!.newContext()
     const adminPage = await adminContext.newPage()
@@ -290,5 +354,69 @@ test.describe.serial('critical journey', () => {
     expect(moderatorStatus, 'a moderator must never reach the payout queue').toBe(403)
 
     await adminContext.close()
+  })
+
+  /**
+   * The admin financial screens, including the banner that keeps an
+   * administrator from reading simulated revenue as real revenue.
+   */
+  test('an admin sees the mock financial system, clearly labelled', async () => {
+    const adminContext = await pageA.context().browser()!.newContext()
+    const adminPage = await adminContext.newPage()
+
+    await loginAdmin(adminPage, ADMIN.superAdmin)
+
+    await adminPage.goto('/admin')
+    await expect(adminPage.getByTestId('admin-test-mode-banner')).toBeVisible()
+    await expect(adminPage.getByTestId('admin-test-mode-banner')).toContainText(
+      'MOCK PAYMENT ENVIRONMENT',
+    )
+
+    // The commission booked by the journey above, reported as revenue.
+    await expect(adminPage.getByText('Rivex komissiyasi', { exact: false }).first()).toBeVisible()
+
+    await adminPage.goto('/admin/transactions')
+    await expect(adminPage.getByText('TEST DATA').first()).toBeVisible()
+
+    // Scoped to the table: the same label is also an <option> in the type
+    // filter, and matching that would prove the filter renders rather than
+    // that the ledger does.
+    const ledger = adminPage.locator('table tbody')
+    await expect(ledger.getByText("Test balans to'ldirildi").first()).toBeVisible()
+    await expect(ledger.getByText(USERS.b.name).first()).toBeVisible()
+
+    await adminPage.goto('/admin/wallets')
+    await expect(adminPage.getByText(USERS.b.name).first()).toBeVisible()
+
+    await adminContext.close()
+  })
+
+  /**
+   * A normal user must reach none of the financial administration.
+   *
+   * Asserted from a real signed-in browser session rather than only in PHP:
+   * the token in this context is an ordinary user's, and every one of these
+   * has to be refused with it.
+   */
+  test('a normal user cannot reach any admin financial endpoint', async () => {
+    for (const path of [
+      '/admin/payment-statistics',
+      '/admin/wallets',
+      '/admin/transactions',
+      '/admin/payments',
+    ]) {
+      const status = await pageB.evaluate(
+        async ([apiBase, token, p]) => {
+          const response = await fetch(`${apiBase}${p}`, {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          })
+
+          return response.status
+        },
+        ['http://127.0.0.1:8812/api/v1', tokenB, path] as const,
+      )
+
+      expect(status, `${path} must be refused for a normal user`).toBe(403)
+    }
   })
 })

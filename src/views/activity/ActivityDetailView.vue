@@ -19,7 +19,8 @@ import ReviewModal from '@/components/activity/ReviewModal.vue'
 import { activitiesApi } from '@/api/activities'
 import { applicationsApi } from '@/api/applications'
 import { conversationsApi } from '@/api/conversations'
-import { invoicesApi } from '@/api/invoices'
+import { invoicesApi, paymentKey } from '@/api/invoices'
+import PaymentSummary from '@/components/wallet/PaymentSummary.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useEchoChannel } from '@/composables/useEchoChannel'
 import { onEchoReconnect } from '@/composables/useEcho'
@@ -35,7 +36,8 @@ import type {
   Invoice,
   User,
 } from '@/types'
-import { formatActivityStartLong, formatMoney } from '@/lib/datetime'
+import { formatActivityStartLong } from '@/lib/datetime'
+import { currencyLabel, formatAmount } from '@/lib/money'
 import { activityStatus, cancellationReasons } from '@/lib/statusLabels'
 import { userProfileRoute } from '@/lib/userLink'
 
@@ -86,6 +88,19 @@ function onReviewSubmitted(revieweeId: number) {
 const confirming = ref(false)
 const payingInvoiceId = ref<number | null>(null)
 
+/**
+ * Whether the money on this screen is simulated.
+ *
+ * Read from the wallet summary the server already sends with /me rather than
+ * from a build flag — the truth about whether a balance is real belongs to the
+ * server, and every amount rendered here has to be able to say so.
+ */
+const walletTestMode = computed(() => auth.wallet?.test_mode ?? false)
+
+const activityCurrencyLabel = computed(() =>
+  currencyLabel(activity.value?.currency ?? 'UZS', walletTestMode.value),
+)
+
 const isOwner = computed(() => activity.value?.owner.id === auth.user?.id)
 
 const isParticipant = computed(() => !!activity.value?.my_participant_id)
@@ -96,7 +111,7 @@ const paymentLabel = computed(() => {
     case 'free':
       return 'Bepul'
     case 'shared_cost':
-      return `Umumiy xarajat — ${formatMoney(activity.value.amount)} / kishi`
+      return `Umumiy xarajat — ${formatAmount(activity.value.amount, activity.value.currency)} ${activityCurrencyLabel.value} / kishi`
     case 'owner_pays':
       return "Sherikka to'lanadi"
     case 'participant_pays':
@@ -240,11 +255,28 @@ async function confirmCompletion() {
   }
 }
 
+/**
+ * The key is minted once per invoice per screen, not per request.
+ *
+ * A double-tapped "To'lash" and a browser retry therefore carry the SAME key,
+ * and the server answers the second with the first payment instead of charging
+ * twice. `payingInvoiceId` disables the button, but a client-side guard cannot
+ * survive a network-layer retry — this is what actually makes it safe.
+ */
+const payKeys = new Map<number, string>()
+
 async function payInvoice(invoice: Invoice) {
+  if (payingInvoiceId.value !== null) return
+
   error.value = ''
   payingInvoiceId.value = invoice.id
+
+  if (!payKeys.has(invoice.id)) {
+    payKeys.set(invoice.id, paymentKey(`invoice-${invoice.id}`))
+  }
+
   try {
-    const { data } = await invoicesApi.pay(invoice.id)
+    const { data } = await invoicesApi.pay(invoice.id, 'provider', payKeys.get(invoice.id) as string)
     if (data.data.checkout_url) {
       window.location.href = data.data.checkout_url
       return
@@ -403,7 +435,7 @@ onMounted(load)
               class="font-bold text-lg"
               :class="activity.payment_type === 'free' ? 'text-ink' : 'text-primary-700'"
             >
-              {{ activity.payment_type === 'free' ? 'Bepul' : formatMoney(activity.amount) }}
+              {{ activity.payment_type === 'free' ? 'Bepul' : formatAmount(activity.amount, activity.currency) + ' ' + activityCurrencyLabel }}
             </p>
             <p
               class="text-sm"
@@ -448,34 +480,53 @@ onMounted(load)
           </div>
         </div>
 
-        <!-- Commission invoice section -->
+        <!-- What Rivex charges, and what it does not. -->
         <div v-if="conversationId && myOwedInvoice" class="card p-5 mt-4">
-          <h2 class="font-semibold text-ink mb-1">Platforma komissiyasi</h2>
-          <p class="text-sm text-ink-muted mb-3">
-            Faoliyat summasi ({{ formatMoney(activity.amount) }}) tomonlar o'rtasida hal qilinadi.
-            Rivex faqat o'z xizmat haqini oladi.
-          </p>
-          <div class="rounded-xl bg-primary-50 px-4 py-3 mb-3">
-            <p class="font-bold text-lg text-primary-700">
-              {{ formatMoney(myOwedInvoice.amount) }}
-            </p>
-            <p class="text-sm text-primary-500">Komissiya ({{ myOwedInvoice.commission_rate }}%)</p>
-          </div>
+          <h2 class="font-semibold text-ink mb-3">To'lov tafsiloti</h2>
+
+          <PaymentSummary
+            :breakdown="myOwedInvoice.breakdown"
+            :test-mode="walletTestMode"
+            class="mb-3"
+          />
+
           <p v-if="error" class="text-sm text-danger mb-3">{{ error }}</p>
+
           <AppButton
             :loading="payingInvoiceId === myOwedInvoice.id"
+            :disabled="payingInvoiceId !== null"
+            data-testid="pay-invoice"
             @click="payInvoice(myOwedInvoice)"
           >
             To'lash
           </AppButton>
         </div>
+
         <div v-else-if="conversationId && myPaidInvoice" class="card p-5 mt-4">
           <div
             class="rounded-xl bg-success-bg text-success px-4 py-3 text-sm font-medium flex items-center gap-2"
+            data-testid="invoice-paid"
           >
             <FontAwesomeIcon :icon="icons.verified" />
-            Komissiya to'landi ({{ formatMoney(myPaidInvoice.amount) }})
+            Komissiya to'landi ({{ formatAmount(myPaidInvoice.amount, myPaidInvoice.currency) }}
+            {{ walletTestMode ? 'TEST ' : '' }}{{ myPaidInvoice.currency }})
           </div>
+        </div>
+
+        <!-- Before anyone is billed: what taking part would cost. Shown to the
+             organiser and to anyone considering applying, so the fee is never
+             a surprise that appears only after acceptance. -->
+        <div
+          v-else-if="activity.pricing && !myPaidInvoice"
+          class="card p-5 mt-4"
+          data-testid="pricing-preview"
+        >
+          <h2 class="font-semibold text-ink mb-3">Narx tafsiloti</h2>
+          <PaymentSummary
+            :breakdown="activity.pricing"
+            :test-mode="walletTestMode"
+            :payable="false"
+          />
         </div>
 
         <div class="mt-4 space-y-3">

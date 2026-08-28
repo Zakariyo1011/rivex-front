@@ -5,11 +5,35 @@ import Avatar from '@/components/ui/Avatar.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import Skeleton from '@/components/ui/Skeleton.vue'
-import { adminApi } from '@/api/admin'
+import AppDrawer from '@/components/ui/AppDrawer.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import { adminApi, adminFinanceApi } from '@/api/admin'
+import { useAdminStore } from '@/stores/admin'
 import { icons } from '@/lib/icons'
-import type { User } from '@/types'
+import { formatDate, formatTime } from '@/lib/datetime'
+import { formatSigned } from '@/lib/money'
+import { useRoute } from 'vue-router'
+import type { AdminUserFinancials, AdminWalletTransaction, User } from '@/types'
+
+const route = useRoute()
+const admin = useAdminStore()
 
 const users = ref<User[]>([])
+
+/**
+ * The financial side of one user, opened in a drawer rather than a page.
+ *
+ * A drawer because it is a lookup, not a destination: the question being asked
+ * is "what happened to this person's money" while working through a list, and
+ * a full navigation loses the list and its filters.
+ *
+ * Only fetched for admins holding `finance.view` — the endpoint refuses anyone
+ * else, and requesting it just to render a 403 would be noise in the logs.
+ */
+const financialsFor = ref<User | null>(null)
+const financials = ref<AdminUserFinancials | null>(null)
+const financialTransactions = ref<AdminWalletTransaction[]>([])
+const financialsLoading = ref(false)
 const loading = ref(true)
 const hasError = ref(false)
 const search = ref('')
@@ -41,6 +65,21 @@ async function load() {
   }
 }
 
+async function openFinancials(user: User) {
+  financialsFor.value = user
+  financials.value = null
+  financialTransactions.value = []
+  financialsLoading.value = true
+
+  try {
+    const { data } = await adminFinanceApi.userFinancials(user.id)
+    financials.value = data.data
+    financialTransactions.value = data.transactions.data
+  } finally {
+    financialsLoading.value = false
+  }
+}
+
 async function setStatus(user: User, status: 'active' | 'suspended' | 'banned') {
   actingId.value = user.id
   try {
@@ -58,7 +97,12 @@ function onSearchInput() {
   searchTimeout = setTimeout(load, 350)
 }
 
-onMounted(load)
+onMounted(() => {
+  // Deep-linked from the transactions table: "who is this row about".
+  if (typeof route.query.q === 'string') search.value = route.query.q
+
+  void load()
+})
 </script>
 
 <template>
@@ -91,7 +135,7 @@ onMounted(load)
         <thead>
           <tr class="border-b border-border text-left text-ink-faint">
             <th class="px-5 py-3 font-medium">Foydalanuvchi</th>
-            <th class="px-5 py-3 font-medium">Telefon</th>
+            <th class="px-5 py-3 font-medium">Aloqa</th>
             <th class="px-5 py-3 font-medium">Holat</th>
             <th class="px-5 py-3 font-medium">Tasdiqlangan</th>
             <th class="px-5 py-3 font-medium"></th>
@@ -116,7 +160,12 @@ onMounted(load)
                 </RouterLink>
               </div>
             </td>
-            <td class="px-5 py-3 text-ink-muted">{{ user.phone }}</td>
+            <td class="px-5 py-3 text-ink-muted">
+              <!-- Google is how accounts exist now, so the email is the
+                   identifier support is given. The phone is often absent. -->
+              <span class="block truncate max-w-[14rem]">{{ user.email ?? '—' }}</span>
+              <span class="block text-xs text-ink-faint">{{ user.phone ?? 'Telefon yo\'q' }}</span>
+            </td>
             <td class="px-5 py-3">
               <StatusBadge :status="user.status" :labels="statusLabels" :variants="statusVariants" />
             </td>
@@ -125,6 +174,13 @@ onMounted(load)
               <span v-else class="text-ink-faint">—</span>
             </td>
             <td class="px-5 py-3 text-right space-x-2">
+              <button
+                v-if="admin.can('finance.view')"
+                class="text-xs font-medium text-primary-600"
+                @click="openFinancials(user)"
+              >
+                Moliya
+              </button>
               <button
                 v-if="user.status !== 'suspended'"
                 class="text-xs font-medium text-warning disabled:opacity-50"
@@ -155,5 +211,95 @@ onMounted(load)
       </table>
       </div>
     </div>
+
+    <AppDrawer
+      v-if="financialsFor"
+      :title="`${financialsFor.name} — moliya`"
+      @close="financialsFor = null"
+    >
+      <div v-if="financialsLoading" class="space-y-3">
+        <Skeleton variant="block" height="5rem" class="rounded-xl" />
+        <Skeleton variant="text" width="60%" />
+        <Skeleton variant="text" width="40%" />
+      </div>
+
+      <div v-else-if="financials" class="space-y-4">
+        <div
+          v-if="financials.test_mode"
+          class="rounded-xl border border-warning/30 bg-warning-bg px-3 py-2 text-xs text-ink-secondary flex items-center gap-2"
+        >
+          <FontAwesomeIcon :icon="icons.testMode" class="text-warning" />
+          TEST DATA — barcha summalar simulyatsiya
+        </div>
+
+        <dl class="grid grid-cols-2 gap-3">
+          <div class="card p-3">
+            <dt class="text-xs text-ink-faint">Balans</dt>
+            <dd class="font-bold text-ink mt-0.5">{{ financials.wallet.balance.formatted }}</dd>
+          </div>
+          <div class="card p-3">
+            <dt class="text-xs text-ink-faint">Yechishda</dt>
+            <dd class="font-bold text-ink mt-0.5">
+              {{ financials.wallet.pending_balance.formatted }}
+            </dd>
+          </div>
+          <div class="card p-3">
+            <dt class="text-xs text-ink-faint">Jami to'ldirilgan</dt>
+            <dd class="font-bold text-ink mt-0.5">{{ financials.totals.test_top_ups.formatted }}</dd>
+          </div>
+          <div class="card p-3">
+            <dt class="text-xs text-ink-faint">Sarflangan</dt>
+            <dd class="font-bold text-ink mt-0.5">{{ financials.totals.spent.formatted }}</dd>
+          </div>
+          <div class="card p-3">
+            <dt class="text-xs text-ink-faint">Qaytarilgan</dt>
+            <dd class="font-bold text-ink mt-0.5">{{ financials.totals.refunded.formatted }}</dd>
+          </div>
+          <div class="card p-3">
+            <dt class="text-xs text-ink-faint">Rivex komissiyasi</dt>
+            <dd class="font-bold text-ink mt-0.5">
+              {{ financials.totals.commission_generated.formatted }}
+            </dd>
+          </div>
+        </dl>
+
+        <p class="text-xs text-ink-faint">
+          {{ financials.counts.payments_successful }} muvaffaqiyatli to'lov ·
+          {{ financials.counts.refunds }} qaytarish ·
+          {{ financials.counts.wallet_transactions }} hamyon operatsiyasi
+        </p>
+
+        <div>
+          <h3 class="font-semibold text-ink mb-2">Tranzaksiyalar tarixi</h3>
+
+          <EmptyState
+            v-if="financialTransactions.length === 0"
+            :icon="icons.receipt"
+            title="Operatsiyalar yo'q"
+          />
+
+          <div v-else class="card divide-y divide-border">
+            <div
+              v-for="tx in financialTransactions"
+              :key="tx.id"
+              class="px-3 py-2.5 flex items-center justify-between gap-3"
+            >
+              <div class="min-w-0">
+                <p class="text-sm text-ink truncate">{{ tx.description || tx.type_label }}</p>
+                <p class="text-xs text-ink-faint">
+                  {{ formatDate(tx.created_at) }}, {{ formatTime(tx.created_at) }}
+                </p>
+              </div>
+              <p
+                class="text-sm font-semibold shrink-0"
+                :class="tx.direction === 'credit' ? 'text-success' : 'text-ink'"
+              >
+                {{ formatSigned(tx.amount, tx.direction, tx.currency) }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </AppDrawer>
   </AdminLayout>
 </template>

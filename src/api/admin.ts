@@ -7,13 +7,23 @@ import type {
   Activity,
   AuditLog,
   AuditLogFilters,
+  AdminPaymentRow,
+  AdminUserFinancials,
+  AdminWalletRow,
+  AdminWalletTransaction,
   DashboardStats,
   Dispute,
+  FinancialOverview,
+  FinancialSeries,
   DisputeResolution,
   IdentityVerification,
   PaginatedResponse,
+  LedgerDirection,
   Report,
+  TransactionFilters,
   User,
+  WalletTransactionStatus,
+  WalletTransactionType,
   Withdrawal,
 } from '@/types'
 
@@ -73,9 +83,92 @@ export const adminAccountsApi = {
   },
 }
 
+/**
+ * The mock financial system, for administrators.
+ *
+ * Every one of these is gated by `finance.view` on the server (and refunds and
+ * adjustments by more than that), so a client that renders a screen it may not
+ * see gets a 403 rather than data. The permission strings the nav filters on
+ * match App\Enums\AdminPermission.
+ */
+export const adminFinanceApi = {
+  statistics(days = 30) {
+    return adminClient.get<{ data: FinancialOverview; series: FinancialSeries }>(
+      '/admin/payment-statistics',
+      { params: { days } },
+    )
+  },
+
+  wallets(params: { q?: string; page?: number; per_page?: number } = {}) {
+    return adminClient.get<{
+      data: AdminWalletRow[]
+      meta: { current_page: number; last_page: number; per_page: number; total: number }
+      test_mode: boolean
+    }>('/admin/wallets', { params })
+  },
+
+  transactions(
+    params: {
+      type?: WalletTransactionType | ''
+      direction?: LedgerDirection | ''
+      status?: WalletTransactionStatus | ''
+      user_id?: number
+      activity_id?: number
+      from?: string
+      to?: string
+      q?: string
+      page?: number
+      per_page?: number
+    } = {},
+  ) {
+    return adminClient.get<
+      PaginatedResponse<AdminWalletTransaction> & {
+        filters: TransactionFilters
+        test_mode: boolean
+      }
+    >('/admin/transactions', { params })
+  },
+
+  payments(
+    params: { status?: string; user_id?: number; activity_id?: number; page?: number } = {},
+  ) {
+    return adminClient.get<{
+      data: AdminPaymentRow[]
+      meta: { current_page: number; last_page: number; per_page: number; total: number }
+    }>('/admin/payments', { params })
+  },
+
+  userFinancials(userId: number, params: { page?: number } = {}) {
+    return adminClient.get<{
+      data: AdminUserFinancials
+      transactions: PaginatedResponse<AdminWalletTransaction>
+    }>(`/admin/users/${userId}/financials`, { params })
+  },
+
+  /** Reverses a completed payment. Idempotent; a reason is mandatory. */
+  refund(paymentId: number, reason: string) {
+    return adminClient.post<{ message: string; data: { id: number; status: string } }>(
+      `/admin/payments/${paymentId}/refund`,
+      { reason },
+    )
+  },
+
+  /** Corrects a balance by hand. Positive credits, negative debits. */
+  adjust(userId: number, amount: number, reason: string) {
+    return adminClient.post<{ message: string; data: AdminWalletTransaction }>(
+      `/admin/users/${userId}/wallet/adjust`,
+      { amount, reason },
+    )
+  },
+}
+
 export const adminApi = {
-  dashboard() {
-    return adminClient.get<{ data: DashboardStats }>('/admin/dashboard')
+  dashboard(days = 30) {
+    return adminClient.get<{
+      data: DashboardStats
+      finance: FinancialOverview
+      series: FinancialSeries
+    }>('/admin/dashboard', { params: { days } })
   },
   users(params: { q?: string; status?: string; page?: number } = {}) {
     return adminClient.get<PaginatedResponse<User>>('/admin/users', { params })

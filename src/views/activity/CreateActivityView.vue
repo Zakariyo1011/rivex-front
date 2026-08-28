@@ -14,7 +14,9 @@ import { extractErrorMessage, extractFieldErrors } from '@/composables/useApiErr
 import { useVerificationGuard } from '@/composables/useVerificationGuard'
 import { useToast } from '@/composables/useToast'
 import { categoryIcon, icons } from '@/lib/icons'
-import { formatMoney } from '@/lib/datetime'
+import { currencyLabel, formatAmount } from '@/lib/money'
+import { usePricingPreview } from '@/composables/usePricingPreview'
+import PaymentSummary from '@/components/wallet/PaymentSummary.vue'
 import {
   MAX_PEOPLE_NEEDED,
   defaultStartAt,
@@ -200,6 +202,20 @@ function selectPayment(value: PaymentType) {
   // can never contradict each other in the payload.
   if (value === 'free') form.amount = 0
 }
+
+/**
+ * The platform fee for the price currently typed, resolved by the server.
+ *
+ * Kept as the whole composable rather than destructured refs so the template
+ * reads `pricing.breakdown.value` — which makes it obvious at the call site
+ * that these are asynchronous answers, not values computed here.
+ */
+const pricing = usePricingPreview(
+  computed(() => form.amount),
+  computed(() => form.payment_type),
+)
+
+const moneyLabel = computed(() => currencyLabel('UZS', pricing.testMode.value))
 
 const selectedPayment = computed(
   () => paymentOptions.find((option) => option.value === form.payment_type) ?? null,
@@ -537,17 +553,39 @@ onMounted(async () => {
           </span>
         </button>
 
-        <AppInput
-          v-if="form.payment_type !== 'free'"
-          v-model.number="form.amount"
-          label="Summa (UZS)"
-          type="number"
-          inputmode="numeric"
-          min="0"
-          placeholder="50000"
-          class="pt-2"
-          :error="shownErrorFor('amount', 5)"
-        />
+        <template v-if="form.payment_type !== 'free'">
+          <AppInput
+            v-model.number="form.amount"
+            :label="`Summa (${moneyLabel})`"
+            type="number"
+            inputmode="numeric"
+            min="0"
+            placeholder="50000"
+            class="pt-2"
+            data-testid="activity-amount"
+            :error="shownErrorFor('amount', 5)"
+          />
+
+          <!-- The fee, while the price is still being typed.
+               Comes from the server (usePricingPreview): a client that
+               multiplied by 5% would be right until the rate changed, and then
+               this figure and the invoice would disagree. -->
+          <PaymentSummary
+            v-if="pricing.breakdown.value"
+            :breakdown="pricing.breakdown.value"
+            :test-mode="pricing.testMode.value"
+            :payable="false"
+            class="mt-1"
+          />
+
+          <p
+            v-else-if="form.payment_type === 'shared_cost' && Number(form.amount) > 0"
+            class="text-xs text-ink-faint leading-relaxed"
+          >
+            Umumiy xarajatli faoliyatlarda Rivex komissiya olmaydi — summani
+            ishtirokchilar o'zaro bo'lishadi.
+          </p>
+        </template>
       </div>
 
       <!-- ── 6. Review ─────────────────────────────────────────────────── -->
@@ -595,7 +633,11 @@ onMounted(async () => {
             <div class="flex items-start gap-3">
               <FontAwesomeIcon :icon="icons.amount" class="text-ink-faint w-4 mt-0.5 shrink-0" />
               <dd class="text-ink-secondary">
-                {{ form.payment_type === 'free' ? 'Bepul' : formatMoney(form.amount) }}
+                {{
+                  form.payment_type === 'free'
+                    ? 'Bepul'
+                    : `${formatAmount(Number(form.amount), 'UZS')} ${moneyLabel}`
+                }}
                 <span v-if="selectedPayment && form.payment_type !== 'free'" class="text-ink-faint">
                   · {{ selectedPayment.label }}
                 </span>

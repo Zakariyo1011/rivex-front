@@ -1,51 +1,24 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter, RouterLink } from 'vue-router'
 import AuthLayout from '@/layouts/AuthLayout.vue'
-import AppButton from '@/components/ui/AppButton.vue'
-import AppInput from '@/components/ui/AppInput.vue'
-import { useAuthStore } from '@/stores/auth'
-import { extractErrorMessage } from '@/composables/useApiError'
+import GoogleSignInButton from '@/components/auth/GoogleSignInButton.vue'
 
-const router = useRouter()
-const auth = useAuthStore()
-
-const phone = ref('+998')
-const password = ref('')
-const loading = ref(false)
-const error = ref('')
-
-async function onSubmit() {
-  error.value = ''
-  loading.value = true
-  try {
-    await auth.login({ phone: phone.value.replace(/\s+/g, ''), password: password.value })
-    router.push({ name: 'home' })
-  } catch (e) {
-    error.value = extractErrorMessage(e)
-  } finally {
-    loading.value = false
-  }
-}
+/**
+ * Kept as a route because links, bookmarks and the 401 interceptor all point
+ * here — but there is no form on it any more. Phone + password sign-in was
+ * removed; the only credential Rivex accepts is a Google identity it has
+ * verified for itself.
+ */
 </script>
 
 <template>
   <AuthLayout>
     <h2 class="text-2xl font-bold text-ink mb-1">Kirish</h2>
-    <p class="text-ink-muted mb-6">Hisobingizga qaytganingizdan xursandmiz</p>
+    <p class="text-ink-muted mb-6">Google hisobingiz bilan davom eting</p>
 
-    <form class="space-y-4" @submit.prevent="onSubmit">
-      <AppInput v-model="phone" label="Telefon raqam" placeholder="+998 90 123 45 67" autocomplete="tel" />
-      <AppInput v-model="password" label="Parol" type="password" autocomplete="current-password" />
+    <GoogleSignInButton label="Google orqali kirish" />
 
-      <p v-if="error" class="text-sm text-danger">{{ error }}</p>
-
-      <AppButton type="submit" :loading="loading">Kirish</AppButton>
-    </form>
-
-    <p class="text-center text-sm text-ink-muted mt-6">
-      Hisobingiz yo'qmi?
-      <RouterLink :to="{ name: 'register' }" class="text-primary-600 font-medium">Ro'yxatdan o'tish</RouterLink>
+    <p class="text-center text-xs text-ink-faint mt-6 leading-relaxed">
+      Hisobingiz bo'lmasa, Google orqali kirganingizda avtomatik yaratiladi.
     </p>
   </AuthLayout>
 </template>

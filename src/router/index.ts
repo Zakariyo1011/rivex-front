@@ -18,16 +18,15 @@ const router = createRouter({
       meta: { guest: true },
     },
     {
-      path: '/auth/register',
-      name: 'register',
-      component: () => import('@/views/auth/RegisterView.vue'),
-      meta: { guest: true },
-    },
-    {
-      path: '/auth/verify-phone',
-      name: 'verify-phone',
-      component: () => import('@/views/auth/VerifyPhoneView.vue'),
-      meta: { requiresAuth: true },
+      // Where Google sends the browser back to. Must match GOOGLE_REDIRECT_URI
+      // and an Authorised redirect URI in Google Cloud Console, exactly.
+      //
+      // `guest: true` is deliberately NOT set: the callback creates the session
+      // it is completing, and bouncing an authenticated visitor away from here
+      // would break the moment between "token stored" and "route replaced".
+      path: '/auth/google/callback',
+      name: 'google-callback',
+      component: () => import('@/views/auth/GoogleCallbackView.vue'),
     },
     {
       path: '/auth/location',
@@ -203,6 +202,15 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // The phone number, KYC status and wallet summary all live on the
+      // profile now. This route exists so a notification or a prompt can link
+      // straight at the phone section rather than at Settings in general.
+      path: '/settings/phone',
+      name: 'phone-settings',
+      component: () => import('@/views/settings/PhoneView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/settings/privacy',
       name: 'privacy-settings',
       component: () => import('@/views/settings/PrivacyView.vue'),
@@ -282,6 +290,18 @@ const router = createRouter({
       meta: { requiresAdminAuth: true, permission: 'verification.view' },
     },
     {
+      path: '/admin/wallets',
+      name: 'admin-wallets',
+      component: () => import('@/views/admin/WalletsView.vue'),
+      meta: { requiresAdminAuth: true, permission: 'finance.view' },
+    },
+    {
+      path: '/admin/transactions',
+      name: 'admin-transactions',
+      component: () => import('@/views/admin/TransactionsView.vue'),
+      meta: { requiresAdminAuth: true, permission: 'finance.view' },
+    },
+    {
       path: '/admin/withdrawals',
       name: 'admin-withdrawals',
       component: () => import('@/views/admin/WithdrawalsView.vue'),
@@ -335,8 +355,13 @@ const router = createRouter({
 /**
  * Screens a half-onboarded user must still be able to reach, otherwise the
  * guard would bounce them away from the very page that unblocks them.
+ *
+ * `verify-phone` is gone: the phone number is profile data now, asked for on
+ * the profile and enforced only when the user actually tries to create or join
+ * an activity. It was the first thing a brand-new account met, and it was an
+ * SMS between somebody and a product they had not seen yet.
  */
-const ONBOARDING_ROUTES = new Set(['verify-phone', 'onboarding-location', 'onboarding-username', 'onboarding-interests'])
+const ONBOARDING_ROUTES = new Set(['onboarding-location', 'onboarding-username', 'onboarding-interests'])
 
 router.beforeEach(async (to) => {
   if (to.meta.requiresAdminAuth || to.meta.adminGuest) {
@@ -386,15 +411,11 @@ router.beforeEach(async (to) => {
   const onboarding = auth.onboarding
   if (!onboarding || ONBOARDING_ROUTES.has(to.name as string)) return
 
-  // Phone first, then region. Identity verification is deliberately NOT forced
-  // here: it is only required for paid activities and payouts, and those are
-  // gated at the point of action (plus the banner on Home). Making everyone
-  // upload a passport before they have seen the product would be a wall, not
-  // an onboarding.
-  if (!onboarding.phone_verified) {
-    return { name: 'verify-phone' }
-  }
-
+  // Region first, then a handle. Neither the phone number nor identity
+  // verification is forced here: both are only required for specific actions,
+  // and those are gated at the point of action (plus the prompts on Home and
+  // the profile). Making everyone confirm an SMS and upload a passport before
+  // they have seen the product would be a wall, not an onboarding.
   if (!onboarding.location_selected) {
     return { name: 'onboarding-location' }
   }

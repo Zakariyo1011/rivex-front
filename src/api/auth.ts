@@ -2,35 +2,68 @@ import client from './client'
 import type {
   FollowCounts,
   OnboardingState,
+  PhoneState,
   ProfileCompletion,
+  SecurityOverview,
   User,
   UserCounters,
   UsernamePolicy,
+  WalletSummary,
 } from '@/types'
 
 interface AuthResponse {
   user: User
   token: string
+  /** True when this callback created the account rather than signing it in. */
+  is_new_user: boolean
 }
 
+/**
+ * Authentication is Google, and only Google.
+ *
+ * The client never sees the client secret and never talks to Google's token
+ * endpoint. It asks the backend for a URL, sends the browser there, and hands
+ * the returned `code` straight back — the backend proves the identity itself.
+ * A `sub` supplied by this layer would be worth nothing and is never sent.
+ */
 export const authApi = {
-  register(payload: { name: string; phone: string; password: string; password_confirmation: string }) {
-    return client.post<AuthResponse>('/auth/register', payload)
+  /** Whether the button should be live, so the screen can be honest. */
+  googleStatus() {
+    return client.get<{ data: { configured: boolean; fake: boolean } }>('/auth/google/status')
   },
-  login(payload: { phone: string; password: string }) {
-    return client.post<AuthResponse>('/auth/login', payload)
+
+  /**
+   * Step 1 — mint a single-use `state` and get the consent URL.
+   *
+   * `redirect_uri` is sent so a local and a deployed frontend can share one
+   * backend; the server accepts it only if it matches a configured origin.
+   */
+  googleRedirect(redirectUri: string) {
+    return client.get<{ data: { url: string; state: string; expires_in: number } }>(
+      '/auth/google/redirect',
+      { params: { redirect_uri: redirectUri } },
+    )
   },
+
+  /** Step 2 — redeem the code. `error` is what a cancelled consent screen sends. */
+  googleCallback(payload: { code?: string; state?: string; error?: string }) {
+    return client.post<AuthResponse>('/auth/google/callback', payload)
+  },
+
+  /** Attach a Google account to a session that already exists. */
+  googleLink(payload: { code: string; state: string }) {
+    return client.post<{ message: string; user: User }>('/auth/google/link', payload)
+  },
+
   logout() {
     return client.post('/auth/logout')
   },
-  verifyPhone(payload: { phone: string; code: string }) {
-    return client.post<{ message: string }>('/auth/verify-phone', payload)
+
+  logoutAll() {
+    return client.post<{ message: string }>('/auth/logout-all')
   },
-  resendOtp(payload: { phone: string }) {
-    return client.post<{ message: string }>('/auth/resend-otp', payload)
-  },
-  /** `onboarding` sits beside `data` — it is private to the caller and is
-   *  deliberately absent from the shared public-profile resource. */
+
+  /** `onboarding` and the rest sit beside `data` — all owner-only. */
   me() {
     return client.get<{
       data: User
@@ -39,28 +72,69 @@ export const authApi = {
       username_policy: UsernamePolicy
       follow_counts: FollowCounts
       counters: UserCounters
+      wallet: WalletSummary
+      phone: PhoneState
     }>('/me')
   },
-  deleteAccount(password: string) {
-    return client.delete<{ message: string }>('/me', { data: { password } })
+
+  /**
+   * A Google-only account has no password to re-prove, so it confirms deletion
+   * by typing its handle back instead.
+   */
+  deleteAccount(payload: { password?: string; confirmation?: string }) {
+    return client.delete<{ message: string }>('/me', { data: payload })
   },
 
-  /** Ends every other session — the server keeps only the current token. */
+  security() {
+    return client.get<{ data: SecurityOverview }>('/me/security')
+  },
+
+  /**
+   * A password is optional now — a second way in, not the credential the
+   * account rests on. `current_password` is omitted when there is none yet.
+   */
   changePassword(payload: {
-    current_password: string
+    current_password?: string
     password: string
     password_confirmation: string
   }) {
     return client.post<{ message: string }>('/me/password', payload)
   },
+}
 
-  /** Step 1 of the phone change: sends a code to the NEW number. */
-  requestPhoneChange(phone: string) {
-    return client.post<{ message: string }>('/me/phone/request', { phone })
+/**
+ * The phone number, as profile data.
+ *
+ * Deliberately its own object rather than part of `authApi`: it stopped being
+ * an authentication concern when Google took over sign-in, and grouping it with
+ * login was what made it feel like one.
+ */
+export const phoneApi = {
+  show() {
+    return client.get<{ data: PhoneState }>('/me/phone')
   },
 
-  /** Step 2: proves the user holds the new number, then moves it over. */
-  confirmPhoneChange(payload: { phone: string; code: string }) {
-    return client.post<{ message: string; phone: string }>('/me/phone/confirm', payload)
+  /** Step 1: claim a number and receive a code on it. */
+  request(phone: string) {
+    return client.post<{ message: string; data: PhoneState; phone: string }>('/me/phone', { phone })
+  },
+
+  /** Step 2: only the code — the number is the one the server recorded. */
+  confirm(code: string) {
+    return client.post<{ message: string; data: PhoneState; user: User }>('/me/phone/confirm', {
+      code,
+    })
+  },
+
+  resend() {
+    return client.post<{ message: string; data: PhoneState }>('/me/phone/resend')
+  },
+
+  cancelPending() {
+    return client.delete<{ message: string; data: PhoneState }>('/me/phone/pending')
+  },
+
+  remove() {
+    return client.delete<{ message: string; data: PhoneState }>('/me/phone')
   },
 }

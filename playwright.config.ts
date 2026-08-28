@@ -33,7 +33,13 @@ const backendEnv = {
   QUEUE_CONNECTION: 'sync',
   BROADCAST_CONNECTION: 'reverb',
   PAYMENT_PROVIDER: 'mock',
+  MOCK_PAYMENTS_ENABLED: 'true',
   SMS_PROVIDER: 'log',
+
+  // Google, without Google. The backend swaps in FakeGoogleProvider, so the
+  // suite exercises the real redirect/callback endpoints and the real state
+  // handling without ever needing credentials or network access.
+  GOOGLE_OAUTH_FAKE: 'true',
   REVERB_HOST: '127.0.0.1',
   REVERB_PORT: String(REVERB_PORT),
   REVERB_SERVER_PORT: String(REVERB_PORT),

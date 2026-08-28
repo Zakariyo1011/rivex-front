@@ -14,6 +14,11 @@ import { join, relative } from 'node:path'
  *
  * Reading `auth.user.phone` (your own number) and the admin panel are the two
  * legitimate cases, so they are named here rather than blanket-allowed.
+ *
+ * The list changed when Google took over sign-in: the number moved out of the
+ * auth screens and onto the profile, so `VerifyPhoneView` and
+ * `ChangePhoneModal` are gone and `PhoneNumberCard` — the one component that
+ * now owns the number — took their place. The rule itself is unchanged.
  */
 
 // Resolved from the project root: under jsdom `import.meta.url` is not a
@@ -23,20 +28,33 @@ const SRC = join(process.cwd(), 'src')
 /** Places a phone number is genuinely the subject of the screen. */
 const ALLOWED = new Set([
   'stores/auth.ts',
-  'components/settings/ChangePhoneModal.vue',
+  'api/auth.ts',
+
+  // The one component that renders, adds and verifies the owner's own number.
+  'components/profile/PhoneNumberCard.vue',
+  'views/settings/PhoneView.vue',
+
   'views/settings/SettingsView.vue',
   'views/profile/ProfileView.vue',
-  'views/auth/VerifyPhoneView.vue',
   'views/admin/UsersView.vue',
-  '__tests__/privacy.spec.ts',
 ])
 
+/**
+ * Application sources only.
+ *
+ * Test files are excluded rather than allow-listed one by one: a spec asserting
+ * ON this rule necessarily mentions the field, and adding each new one to the
+ * allowlist would slowly turn the allowlist into the thing that needs guarding.
+ */
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = join(dir, entry)
-    if (statSync(full).isDirectory()) return sourceFiles(full)
 
-    return /\.(ts|vue)$/.test(entry) ? [full] : []
+    if (statSync(full).isDirectory()) {
+      return entry === '__tests__' ? [] : sourceFiles(full)
+    }
+
+    return /\.(ts|vue)$/.test(entry) && !/\.spec\.(ts|vue)$/.test(entry) ? [full] : []
   })
 }
 
