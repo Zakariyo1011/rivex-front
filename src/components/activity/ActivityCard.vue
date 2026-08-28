@@ -5,7 +5,7 @@ import Rating from '@/components/ui/Rating.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { activityStatus } from '@/lib/statusLabels'
 import { categoryIcon, icons } from '@/lib/icons'
-import { formatActivityStart, formatMoney, formatNumber } from '@/lib/datetime'
+import { formatActivityStart, formatMoney, formatNumber, formatTime } from '@/lib/datetime'
 import type { Activity } from '@/types'
 
 const props = withDefaults(
@@ -55,7 +55,18 @@ const distanceLabel = computed(() => {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`
 })
 
-const startLabel = computed(() => formatActivityStart(props.activity.start_at))
+/**
+ * "Ertaga, 18:00 — 20:00".
+ *
+ * The card used to show only the start, which answers "when do I turn up" and
+ * not "am I free". The end costs six characters and removes the tap that used
+ * to be needed to find out. Same range, same order and same em dash as the
+ * detail page, so the two never read as different facts.
+ */
+const startLabel = computed(
+  () =>
+    `${formatActivityStart(props.activity.start_at)} — ${formatTime(props.activity.ends_at)}`,
+)
 
 /**
  * Whether this card should say what state the activity is in.

@@ -20,12 +20,14 @@ const rules = [
   'Hujjatdagi rasmga o\'xshash bo\'lsin',
 ]
 
-const canSubmit = computed(() => !!verification.selfieFile && !!verification.documentFile)
+const canSubmit = computed(() => !!verification.selfieFile && verification.documentsComplete)
 
 onMounted(() => {
-  // Deep-linked here without a document (e.g. after a reload, which clears the
-  // in-memory files on purpose) — send them back to pick one.
-  if (!verification.documentFile) {
+  // Deep-linked here without every required page (e.g. after a reload, which
+  // clears the in-memory files on purpose) — send them back to finish. An ID
+  // card needs two pages, so "has a document" is not the same question as
+  // "has enough of one".
+  if (!verification.documentsComplete) {
     router.replace({ name: 'verification-document' })
   }
 })

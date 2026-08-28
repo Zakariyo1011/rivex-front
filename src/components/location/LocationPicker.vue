@@ -216,7 +216,7 @@ watch(
     <AppInput
       :model-value="locationName"
       label="Uchrashuv joyi"
-      :placeholder="placeholder ?? 'Masalan: Magic City, 2-qavat'"
+      :placeholder="placeholder ?? 'Uchrashuv joyini kiriting'"
       :error="errors?.location_name"
       hint="Ishtirokchi shu manzilga keladi — aniq yozing."
       maxlength="200"

@@ -30,6 +30,37 @@ const actionable = (status: string) => status === 'pending' || status === 'needs
 
 const formatDate = (value: string | null) => (value ? formatDateTime(value) : "Ma'lum emas")
 
+/**
+ * Which provider reached the decision, in words.
+ *
+ * `dev_auto` is spelled out rather than prettified: a reviewer must be able to
+ * tell a local test approval from a real one at a glance, and a friendly label
+ * would hide exactly the distinction that matters.
+ */
+const providerLabel = (provider: string) =>
+  ({
+    dev_auto: 'Test tasdiqlash (avtomatik, tekshirilmagan)',
+    manual: 'Admin (qo\'lda)',
+    myid: 'MyID',
+  })[provider] ?? provider
+
+const isTestProvider = (verification: IdentityVerification) => verification.provider === 'dev_auto'
+
+/** The reading, as labelled rows, skipping fields the scan did not yield. */
+function extractedRows(verification: IdentityVerification) {
+  const data = verification.extracted_document
+
+  if (!data) return []
+
+  return [
+    { label: 'Ism', value: data.first_name },
+    { label: 'Familiya', value: data.last_name },
+    { label: 'Hujjat raqami', value: data.document_number },
+    { label: "Tug'ilgan sana", value: data.date_of_birth },
+    { label: 'Amal qilish muddati', value: data.expires_on },
+  ].filter((row): row is { label: string; value: string } => !!row.value)
+}
+
 async function load() {
   loading.value = true
   hasError.value = false
@@ -124,9 +155,61 @@ onMounted(load)
             :variants="kycStatus.variants"
           />
         </div>
-        <p class="text-xs text-ink-faint mb-3">
-          Yuborilgan: {{ formatDate(verification.submitted_at) }} · Urinish:
-          {{ verification.attempts }}/{{ verification.max_attempts }}
+        <!-- The facts a reviewer needs before opening anything: who, what kind
+             of document, when it arrived, and which provider decided. -->
+        <dl class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs mb-4">
+          <div>
+            <dt class="text-ink-faint">Hujjat turi</dt>
+            <dd class="text-ink-secondary font-medium">
+              {{ verification.document_type_label ?? "Ko'rsatilmagan" }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-ink-faint">Yuborilgan</dt>
+            <dd class="text-ink-secondary font-medium">
+              {{ formatDate(verification.submitted_at) }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-ink-faint">Ko'rib chiqilgan</dt>
+            <dd class="text-ink-secondary font-medium">
+              {{ formatDate(verification.reviewed_at) }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-ink-faint">Urinish</dt>
+            <dd class="text-ink-secondary font-medium">
+              {{ verification.attempts }}/{{ verification.max_attempts }}
+            </dd>
+          </div>
+          <div v-if="verification.user?.email" class="col-span-2">
+            <dt class="text-ink-faint">Email</dt>
+            <dd class="text-ink-secondary font-medium truncate">{{ verification.user.email }}</dd>
+          </div>
+          <div v-if="verification.user?.phone" class="col-span-2">
+            <dt class="text-ink-faint">Telefon</dt>
+            <dd class="text-ink-secondary font-medium">{{ verification.user.phone }}</dd>
+          </div>
+          <div v-if="verification.provider" class="col-span-2 sm:col-span-4">
+            <dt class="text-ink-faint">Qaror kim tomonidan</dt>
+            <dd class="font-medium" :class="isTestProvider(verification) ? 'text-warning' : 'text-ink-secondary'">
+              {{ providerLabel(verification.provider) }}
+            </dd>
+          </div>
+        </dl>
+
+        <!-- A test approval must never be mistaken for a real one. This is the
+             whole reason DevAutoKycProvider reports its own name rather than
+             borrowing a provider's. -->
+        <p
+          v-if="isTestProvider(verification)"
+          class="mb-4 rounded-lg bg-warning-bg border border-warning/30 px-3 py-2 text-xs text-ink-secondary flex items-start gap-2"
+        >
+          <FontAwesomeIcon :icon="icons.testMode" class="text-warning mt-0.5 shrink-0" />
+          <span>
+            Bu tasdiqlash <strong>test rejimida</strong> avtomatik berilgan. Hujjat haqiqiyligi
+            va yuz mosligi tekshirilmagan.
+          </span>
         </p>
 
         <KycDocumentViewer
@@ -134,6 +217,30 @@ onMounted(load)
           :documents="verification.documents"
           class="mb-4"
         />
+
+        <!-- What OCR read off the document.
+             Offered to the reviewer as a hint and labelled as one: it says
+             "suggests", never "verified". A forged document with clean text
+             OCRs perfectly, so this shortens a review and never replaces it.
+             See App\Kyc\Ocr\DocumentReaderInterface. -->
+        <details
+          v-if="verification.extracted_document?.succeeded"
+          class="mb-4 rounded-xl border border-border bg-surface-muted/60"
+        >
+          <summary class="px-3 py-2 text-xs font-medium text-ink-muted cursor-pointer select-none">
+            Hujjatdan o'qilgan ma'lumot
+            <span class="text-ink-faint font-normal">
+              · {{ verification.document_reader }} · faqat ishora
+            </span>
+          </summary>
+
+          <dl class="px-3 pb-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+            <div v-for="row in extractedRows(verification)" :key="row.label">
+              <dt class="text-ink-faint">{{ row.label }}</dt>
+              <dd class="text-ink-secondary font-medium break-all">{{ row.value }}</dd>
+            </div>
+          </dl>
+        </details>
         <p
           v-if="verification.rejection_reason"
           class="text-sm text-danger bg-danger-bg rounded-lg p-3 mb-3"

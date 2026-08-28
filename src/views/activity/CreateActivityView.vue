@@ -6,7 +6,6 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppSelect from '@/components/ui/AppSelect.vue'
 import AppTextarea from '@/components/ui/AppTextarea.vue'
-import ImagePicker from '@/components/verification/ImagePicker.vue'
 import LocationPicker from '@/components/location/LocationPicker.vue'
 import { activitiesApi } from '@/api/activities'
 import { categoriesApi } from '@/api/categories'
@@ -15,12 +14,15 @@ import { useVerificationGuard } from '@/composables/useVerificationGuard'
 import { useToast } from '@/composables/useToast'
 import { categoryIcon, icons } from '@/lib/icons'
 import { currencyLabel, formatAmount } from '@/lib/money'
+import { formatDayLong, formatDuration, formatTimeRange } from '@/lib/datetime'
 import { usePricingPreview } from '@/composables/usePricingPreview'
-import PaymentSummary from '@/components/wallet/PaymentSummary.vue'
+import ActivityPriceSummary from '@/components/activity/ActivityPriceSummary.vue'
 import {
   MAX_PEOPLE_NEEDED,
   defaultStartAt,
   emptyActivityForm,
+  endTimeFor,
+  formDurationMinutes,
   firstStepWithError,
   guidanceFor,
   paymentOptions,
@@ -132,7 +134,7 @@ function shownErrorFor(field: string, ownerStep: number): string | undefined {
 
 const FIELDS_BY_STEP: Record<number, string[]> = {
   1: ['title', 'category_id', 'description'],
-  2: ['start_at', 'duration_minutes'],
+  2: ['start_at', 'ends_at'],
   3: ['location_name', 'region_id', 'district_id', 'latitude'],
   4: ['people_needed'],
   5: ['payment_type', 'amount'],
@@ -229,6 +231,51 @@ const startPreview = computed(() => {
   return Number.isNaN(at.getTime()) ? null : at
 })
 
+/** "18:00 — 20:00", plus how long that is, once both ends are set. */
+const timeRangePreview = computed(() => {
+  if (!form.date || !form.time || !form.end_time) return null
+
+  const start = new Date(`${form.date}T${form.time}`)
+  const end = new Date(`${form.date}T${form.end_time}`)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
+
+  // Past midnight belongs to the next day — see formDurationMinutes.
+  if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1)
+
+  return {
+    label: formatTimeRange(start, end),
+    duration: formatDuration(formDurationMinutes(form) ?? 0),
+  }
+})
+
+/**
+ * Moving the start carries the end with it, keeping the gap.
+ *
+ * Without this, changing 18:00 to 21:00 leaves the end at 20:00 and the form
+ * is suddenly invalid through no fault of the user — they answered the
+ * question they were asked and were told they were wrong. Only the untouched
+ * default is dragged along: once somebody sets an end deliberately, it is
+ * theirs and the start stops moving it.
+ */
+let endTimeIsUserChosen = false
+
+function onStartTimeChange(value: string) {
+  const previous = form.time
+  form.time = value
+
+  if (endTimeIsUserChosen || !value) return
+
+  const gap = previous && form.end_time ? formDurationMinutes({ ...form, time: previous }) : null
+
+  form.end_time = endTimeFor(value, gap ?? undefined)
+}
+
+function onEndTimeChange(value: string) {
+  endTimeIsUserChosen = true
+  form.end_time = value
+}
+
 /**
  * `min` on the date input, so the native picker itself refuses yesterday.
  *
@@ -300,6 +347,7 @@ onMounted(async () => {
   const start = defaultStartAt()
   form.date = start.date
   form.time = start.time
+  form.end_time = start.end_time
 
   try {
     const { data } = await categoriesApi.tree()
@@ -393,51 +441,56 @@ onMounted(async () => {
           :error="shownErrorFor('description', 1)"
           maxlength="2000"
         />
-
-        <ImagePicker
-          v-model="form.image"
-          label="Muqova rasmi (ixtiyoriy)"
-          empty-label="Rasm qo'shish"
-          hint="JPG, PNG yoki WEBP · 4 MB gacha"
-          :capture="null"
-          :accepted-types="['image/jpeg', 'image/png', 'image/webp']"
-          :max-bytes="4 * 1024 * 1024"
-        />
       </div>
 
-      <!-- ── 2. When ───────────────────────────────────────────────────── -->
+      <!-- ── 2. When ─────────────────────────────────────────────────────
+           A start AND an end, because those are the two facts somebody
+           actually schedules. The old form asked for a start plus an optional
+           length in minutes, which made the reader do arithmetic to answer the
+           question they had — "when am I free again?" -->
       <div v-else-if="step === 2" class="space-y-4">
+        <AppInput v-model="form.date" label="Sana" type="date" :min="today" />
+
         <div class="grid grid-cols-2 gap-3">
-          <AppInput v-model="form.date" label="Sana" type="date" :min="today" />
-          <AppInput v-model="form.time" label="Vaqt" type="time" />
+          <AppInput
+            :model-value="form.time"
+            label="Boshlanish vaqti"
+            type="time"
+            data-testid="activity-start-time"
+            @update:model-value="onStartTimeChange(String($event))"
+          />
+          <AppInput
+            :model-value="form.end_time"
+            label="Tugash vaqti"
+            type="time"
+            data-testid="activity-end-time"
+            @update:model-value="onEndTimeChange(String($event))"
+          />
         </div>
 
         <p v-if="shownErrorFor('start_at', 2)" class="-mt-2 text-sm text-danger">
           {{ shownErrorFor('start_at', 2) }}
         </p>
-        <p v-else-if="startPreview" class="-mt-2 text-sm text-ink-muted flex items-center gap-2">
-          <FontAwesomeIcon :icon="icons.time" class="text-ink-faint" />
-          {{
-            startPreview.toLocaleDateString('uz-UZ', {
-              weekday: 'long',
-              day: 'numeric',
-              month: 'long',
-            })
-          }},
-          {{ form.time }}
+        <p v-else-if="shownErrorFor('ends_at', 2)" class="-mt-2 text-sm text-danger">
+          {{ shownErrorFor('ends_at', 2) }}
         </p>
 
-        <AppInput
-          v-model="form.duration_minutes"
-          label="Davomiyligi (ixtiyoriy)"
-          type="number"
-          inputmode="numeric"
-          min="15"
-          max="1440"
-          placeholder="90"
-          hint="Daqiqada. Ishtirokchi qancha vaqt ajratishini bilishi uchun."
-          :error="shownErrorFor('duration_minutes', 2)"
-        />
+        <!-- What was just chosen, read back as a sentence. The range is the
+             thing being decided, so it is the thing shown. -->
+        <div
+          v-else-if="startPreview && timeRangePreview"
+          class="-mt-1 rounded-xl bg-surface-muted px-4 py-3 flex items-start gap-3"
+          data-testid="activity-time-preview"
+        >
+          <FontAwesomeIcon :icon="icons.time" class="text-primary-600 mt-0.5 shrink-0" />
+          <div class="min-w-0">
+            <p class="text-sm font-semibold text-ink">{{ timeRangePreview.label }}</p>
+            <p class="text-xs text-ink-muted mt-0.5">
+              {{ formatDayLong(startPreview) }}
+              <span v-if="timeRangePreview.duration"> · {{ timeRangePreview.duration }}</span>
+            </p>
+          </div>
+        </div>
       </div>
 
       <!-- ── 3. Where ──────────────────────────────────────────────────── -->
@@ -519,9 +572,7 @@ onMounted(async () => {
 
       <!-- ── 5. Money ──────────────────────────────────────────────────── -->
       <div v-else-if="step === 5" class="space-y-3">
-        <p class="text-sm text-ink-muted">
-          Rivex pulni ushlab qolmaydi — hisob-kitob tomonlar o'rtasida bo'ladi.
-        </p>
+        <p class="text-sm text-ink-muted">Faoliyat qanday to'lanadi?</p>
 
         <button
           v-for="option in paymentOptions"
@@ -566,15 +617,19 @@ onMounted(async () => {
             :error="shownErrorFor('amount', 5)"
           />
 
-          <!-- The fee, while the price is still being typed.
-               Comes from the server (usePricingPreview): a client that
-               multiplied by 5% would be right until the rate changed, and then
-               this figure and the invoice would disagree. -->
-          <PaymentSummary
+          <!-- Two lines: the price, and the fee charged on top of it.
+               Deliberately NOT the full PaymentSummary — nobody is paying
+               anything on this screen, and its settlement line reads as though
+               the fee has been deducted from the price. See
+               ActivityPriceSummary for the whole argument.
+
+               The figures come from the server (usePricingPreview): a client
+               that multiplied by 5% itself would be right until an admin
+               changed the rate, and then this and the invoice would disagree. -->
+          <ActivityPriceSummary
             v-if="pricing.breakdown.value"
             :breakdown="pricing.breakdown.value"
             :test-mode="pricing.testMode.value"
-            :payable="false"
             class="mt-1"
           />
 
@@ -604,9 +659,12 @@ onMounted(async () => {
             <div class="flex items-start gap-3">
               <FontAwesomeIcon :icon="icons.time" class="text-ink-faint w-4 mt-0.5 shrink-0" />
               <dd class="text-ink-secondary">
-                {{ form.date }} · {{ form.time }}
-                <span v-if="form.duration_minutes" class="text-ink-faint">
-                  · {{ form.duration_minutes }} daqiqa
+                <span v-if="startPreview">{{ formatDayLong(startPreview) }}</span>
+                <span v-if="timeRangePreview" class="font-medium text-ink">
+                  · {{ timeRangePreview.label }}
+                </span>
+                <span v-if="timeRangePreview?.duration" class="text-ink-faint">
+                  · {{ timeRangePreview.duration }}
                 </span>
               </dd>
             </div>

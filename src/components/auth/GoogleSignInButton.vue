@@ -1,36 +1,71 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { authApi } from '@/api/auth'
+import { adminAuthApi } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
+import { useAdminStore } from '@/stores/admin'
 import { icons } from '@/lib/icons'
 
 /**
- * "Google orqali davom etish" — the one way into Rivex.
+ * "Google orqali davom etish" — the one way into Rivex, and into its panel.
  *
  * The button asks the backend for a consent URL and then leaves the page. It
  * never touches Google directly and never learns the client secret: the code
  * comes back to /auth/google/callback and the backend redeems it.
  *
+ * ---------------------------------------------------------------------------
+ * ONE BUTTON, TWO FLOWS
+ * ---------------------------------------------------------------------------
+ *
+ * `flow` selects which backend begins the handshake — the consumer sign-in or
+ * the admin one. They are genuinely different policies (the consumer callback
+ * creates an account for any Google identity; the admin callback admits only
+ * identities an AdminUser row already names), and they stay different services
+ * on the server for exactly that reason.
+ *
+ * What they share is this: the Google mark, the consent redirect, the
+ * `configured` check, and the failure copy. Those were about to be a second
+ * copy of an inline four-path SVG and a status probe on the admin login screen,
+ * which is the kind of duplication that drifts — one button gets a fix and the
+ * other does not. So the PRESENTATION is shared here and the POLICY is not.
+ *
  * `configured` is checked first so the screen can be honest. A button that
- * fails when pressed is worse than a button that explains it is not set up
- * yet, and with no credentials in .env that is exactly the state.
+ * fails when pressed is worse than one that explains it is not set up yet, and
+ * with no credentials in .env that is exactly the state.
  */
-const props = withDefaults(defineProps<{ label?: string }>(), {
-  label: 'Google orqali davom etish',
-})
+const props = withDefaults(
+  defineProps<{
+    label?: string
+    /** Which sign-in to begin. Defaults to the consumer flow. */
+    flow?: 'user' | 'admin'
+  }>(),
+  {
+    label: 'Google orqali davom etish',
+    flow: 'user',
+  },
+)
 
 const auth = useAuthStore()
+const adminStore = useAdminStore()
 
 const loading = ref(false)
 const configured = ref<boolean | null>(null)
 const error = ref('')
 
-/** Where Google sends the browser back to. Must match the Cloud Console entry. */
+/**
+ * Where Google sends the browser back to.
+ *
+ * The same URI for both flows, so only ONE Authorised redirect URI has to be
+ * registered in Google Cloud Console. Which flow is being completed is carried
+ * in sessionStorage by whichever store began it — see GoogleCallbackView.
+ */
 const redirectUri = computed(() => `${window.location.origin}/auth/google/callback`)
 
 onMounted(async () => {
   try {
-    const { data } = await authApi.googleStatus()
+    const { data } =
+      props.flow === 'admin' ? await adminAuthApi.googleStatus() : await authApi.googleStatus()
+
     configured.value = data.data.configured
   } catch {
     // A failed status check must not hide the button — the sign-in attempt
@@ -44,7 +79,11 @@ async function signIn() {
   loading.value = true
 
   try {
-    const { url } = await auth.beginGoogleSignIn(redirectUri.value)
+    const { url } =
+      props.flow === 'admin'
+        ? await adminStore.beginGoogleSignIn(redirectUri.value)
+        : await auth.beginGoogleSignIn(redirectUri.value)
+
     window.location.href = url
   } catch (e: unknown) {
     const response = (e as { response?: { data?: { message?: string } } }).response

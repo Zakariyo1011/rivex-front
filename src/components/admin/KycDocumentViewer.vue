@@ -49,11 +49,23 @@ async function load() {
 watch(() => props.documents, load, { immediate: true })
 onBeforeUnmount(release)
 
+/**
+ * Fallback page names, for a row stored before the server sent a label.
+ *
+ * The server resolves `document.label` from App\Kyc\KycDocumentType, which is
+ * the authority — a reviewer about to open a stranger's identity document must
+ * be told which side they are looking at, and inferring it from row order was
+ * how an ID card's back could be mistaken for its front.
+ */
 const labels: Record<string, string> = {
-  passport: 'Passport',
-  id_card: 'ID karta',
+  passport: "Passport ma'lumotlar sahifasi",
+  id_card_front: 'ID karta — old tomoni',
+  id_card_back: 'ID karta — orqa tomoni',
   selfie: 'Selfi',
 }
+
+const captionFor = (document: VerificationDocument) =>
+  document.label || labels[document.doc_type] || document.doc_type
 </script>
 
 <template>
@@ -67,16 +79,23 @@ const labels: Record<string, string> = {
 
     <p v-else-if="failed" class="text-sm text-danger">Hujjatlarni yuklab bo'lmadi.</p>
 
-    <div v-else class="grid grid-cols-2 gap-3 max-w-md">
-      <figure v-for="document in documents" :key="document.id" class="rounded-xl border border-border overflow-hidden bg-surface-muted">
+    <!-- One tile per page. An ID card contributes two, a passport one, and the
+         selfie is always present — so the grid is sized for three and wraps. -->
+    <div v-else class="grid grid-cols-2 sm:grid-cols-3 gap-3 max-w-2xl">
+      <figure
+        v-for="document in documents"
+        :key="document.id"
+        class="rounded-xl border border-border overflow-hidden bg-surface-muted"
+        :data-testid="`kyc-doc-${document.doc_type}`"
+      >
         <img
           v-if="objectUrls[document.id]"
           :src="objectUrls[document.id]"
-          :alt="labels[document.doc_type] ?? document.doc_type"
+          :alt="captionFor(document)"
           class="w-full aspect-[4/3] object-contain bg-black/5"
         />
         <figcaption class="px-3 py-2 text-xs text-ink-muted border-t border-border">
-          {{ labels[document.doc_type] ?? document.doc_type }}
+          {{ captionFor(document) }}
         </figcaption>
       </figure>
     </div>

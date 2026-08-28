@@ -21,6 +21,7 @@ import { applicationsApi } from '@/api/applications'
 import { conversationsApi } from '@/api/conversations'
 import { invoicesApi, paymentKey } from '@/api/invoices'
 import PaymentSummary from '@/components/wallet/PaymentSummary.vue'
+import TestModeBanner from '@/components/wallet/TestModeBanner.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useEchoChannel } from '@/composables/useEchoChannel'
 import { onEchoReconnect } from '@/composables/useEcho'
@@ -36,7 +37,7 @@ import type {
   Invoice,
   User,
 } from '@/types'
-import { formatActivityStartLong } from '@/lib/datetime'
+import { formatDayLong, formatDuration, formatTimeRange } from '@/lib/datetime'
 import { currencyLabel, formatAmount } from '@/lib/money'
 import { activityStatus, cancellationReasons } from '@/lib/statusLabels'
 import { userProfileRoute } from '@/lib/userLink'
@@ -99,6 +100,14 @@ const walletTestMode = computed(() => auth.wallet?.test_mode ?? false)
 
 const activityCurrencyLabel = computed(() =>
   currencyLabel(activity.value?.currency ?? 'UZS', walletTestMode.value),
+)
+
+/** Whether the money on this screen is simulated. Named for the template. */
+const isTestMode = computed(() => walletTestMode.value)
+
+/** "2 soat" — the length, derived server-side from the two endpoints. */
+const durationLabel = computed(() =>
+  activity.value ? formatDuration(activity.value.duration_minutes) : '',
 )
 
 const isOwner = computed(() => activity.value?.owner.id === auth.user?.id)
@@ -372,11 +381,12 @@ onMounted(load)
     <ErrorState v-else-if="hasError" @retry="load" />
 
     <div v-else-if="activity" class="pb-8">
-      <div v-if="activity.image_url" class="w-full h-56 md:h-72 md:rounded-b-3xl overflow-hidden">
-        <img :src="activity.image_url" class="w-full h-full object-cover" />
-      </div>
+      <!-- The category mark, which every activity has and nobody has to
+           upload. Activities no longer carry a cover image: it was the first
+           thing the create wizard asked for and the least important thing an
+           activity has, and somebody arranging a game on Thursday has no
+           photograph of it. -->
       <div
-        v-else
         class="w-full h-40 md:h-56 md:rounded-b-3xl bg-primary-50 flex items-center justify-center text-primary-300 text-5xl"
       >
         <FontAwesomeIcon :icon="categoryIcon(activity.category.slug)" />
@@ -401,15 +411,52 @@ onMounted(load)
 
           <h1 class="text-xl font-bold text-ink mt-2">{{ activity.title }}</h1>
 
-          <div class="mt-3 space-y-1.5 text-sm text-ink-muted">
-            <p class="flex items-center gap-2">
-              <FontAwesomeIcon :icon="icons.time" class="text-ink-faint w-4" />
-              {{ formatActivityStartLong(activity.start_at) }}
-            </p>
-            <p class="flex items-center gap-2">
-              <FontAwesomeIcon :icon="icons.people" class="text-ink-faint w-4" />
-              {{ activity.people_needed }} kishi kerak
-            </p>
+          <!-- The three facts somebody scans for before anything else: when,
+               with how many, and where. Each is labelled, because an unlabelled
+               row of icons makes the reader decode before they can read. -->
+          <div class="mt-4 space-y-3">
+            <div class="flex items-start gap-3" data-testid="activity-time">
+              <span
+                class="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center shrink-0"
+              >
+                <FontAwesomeIcon :icon="icons.time" class="text-sm" />
+              </span>
+              <div class="min-w-0">
+                <p class="text-xs font-medium text-ink-faint">Vaqt</p>
+                <p class="text-sm font-semibold text-ink">
+                  {{ formatTimeRange(activity.start_at, activity.ends_at) }}
+                </p>
+                <!-- The DAY and the length. Deliberately not
+                     `formatActivityStartLong`, which ends in the start time —
+                     it was printing "28-avgust, juma · 18:00" directly under
+                     "18:00 — 20:30", stating the same fact twice in two
+                     formats one line apart. -->
+                <p class="text-xs text-ink-muted mt-0.5">
+                  {{ formatDayLong(activity.start_at) }}
+                  <span v-if="durationLabel"> · {{ durationLabel }}</span>
+                </p>
+              </div>
+            </div>
+
+            <div class="flex items-start gap-3">
+              <span
+                class="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center shrink-0"
+              >
+                <FontAwesomeIcon :icon="icons.people" class="text-sm" />
+              </span>
+              <div class="min-w-0">
+                <p class="text-xs font-medium text-ink-faint">Ishtirokchilar</p>
+                <p class="text-sm font-semibold text-ink">
+                  {{ activity.people_needed }} kishi kerak
+                  <span
+                    v-if="activity.accepted_participants_count !== undefined"
+                    class="font-normal text-ink-muted"
+                  >
+                    · {{ activity.accepted_participants_count }} ta joy band
+                  </span>
+                </p>
+              </div>
+            </div>
           </div>
 
           <!-- Meeting point, with an opt-in map. Replaces the plain location
@@ -427,10 +474,17 @@ onMounted(load)
             </p>
           </div>
 
+          <!-- The price, and the fee charged ON it.
+               Not the full PaymentSummary: nobody is paying anything on this
+               screen, and its settlement line reads as though the fee has been
+               taken off the price. The amount shown is exactly what the
+               organiser entered. -->
           <div
             class="mt-4 rounded-xl px-4 py-3"
             :class="activity.payment_type === 'free' ? 'bg-surface-muted' : 'bg-primary-50'"
+            data-testid="activity-price"
           >
+            <p class="text-xs font-medium text-ink-faint mb-0.5">Narx</p>
             <p
               class="font-bold text-lg"
               :class="activity.payment_type === 'free' ? 'text-ink' : 'text-primary-700'"
@@ -443,6 +497,18 @@ onMounted(load)
             >
               {{ paymentLabel }}
             </p>
+
+            <div
+              v-if="activity.pricing"
+              class="mt-2.5 pt-2.5 border-t border-primary-200/60 flex items-center justify-between gap-3"
+            >
+              <span class="text-sm text-primary-600">Rivex komissiyasi</span>
+              <span class="text-sm font-semibold text-primary-700 tabular-nums">
+                {{ activity.pricing.commission_rate }}%
+              </span>
+            </div>
+
+            <TestModeBanner v-if="isTestMode" variant="inline" class="mt-2.5" />
           </div>
 
           <div v-if="activity.description" class="mt-5">
@@ -516,18 +582,21 @@ onMounted(load)
         <!-- Before anyone is billed: what taking part would cost. Shown to the
              organiser and to anyone considering applying, so the fee is never
              a surprise that appears only after acceptance. -->
-        <div
-          v-else-if="activity.pricing && !myPaidInvoice"
-          class="card p-5 mt-4"
-          data-testid="pricing-preview"
-        >
-          <h2 class="font-semibold text-ink mb-3">Narx tafsiloti</h2>
-          <PaymentSummary
-            :breakdown="activity.pricing"
-            :test-mode="walletTestMode"
-            :payable="false"
-          />
-        </div>
+        <!-- There is deliberately NO speculative breakdown here.
+             This slot used to render the full PaymentSummary for anybody
+             opening the activity — "Faoliyat narxi / Rivex komissiyasi /
+             Tomonlar o'rtasida — Rivex orqali o'tmaydi / Rivex oladi" — to a
+             reader who was not paying anything and had not asked. Two problems:
+             it answers a question nobody posed, and "Tomonlar o'rtasida:
+             47 500" under a price of 50 000 reads as though the fee had been
+             deducted from the price. It has not.
+
+             The price and the commission rate are already stated in the
+             summary card above, which is what the reader wants. The full
+             four-line breakdown still appears — but on the payment card
+             directly above this, and only for somebody with an invoice
+             actually owed, where knowing exactly what the button takes is the
+             whole point. -->
 
         <div class="mt-4 space-y-3">
           <template v-if="isOwner">

@@ -62,7 +62,11 @@ test.describe.serial('critical journey', () => {
         title: 'E2E PS5 FIFA',
         description: 'Playwright critical journey',
         location_name: 'Chilonzor',
-        start_at: new Date(Date.now() + 86_400_000).toISOString().slice(0, 19).replace('T', ' '),
+        // Full ISO-8601 with a `Z`, and both endpoints. The old
+        // `.slice(0,19).replace('T',' ')` produced a bare wall-clock string,
+        // which the API used to read as UTC and shift by the client's offset.
+        start_at: new Date(Date.now() + 86_400_000).toISOString(),
+        ends_at: new Date(Date.now() + 86_400_000 + 2 * 3_600_000).toISOString(),
         people_needed: 1,
         payment_type: 'participant_pays',
         amount: 100000,

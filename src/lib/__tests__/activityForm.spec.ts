@@ -30,13 +30,12 @@ function form(overrides: Partial<ActivityFormState> = {}): ActivityFormState {
     district_id: null,
     date: '2027-01-01',
     time: '18:00',
-    duration_minutes: '',
+    end_time: '20:00',
     latitude: null,
     longitude: null,
     people_needed: 2,
     payment_type: 'free',
     amount: 0,
-    image: null,
     ...overrides,
   }
 }
@@ -71,8 +70,34 @@ describe('guidanceFor', () => {
 })
 
 describe('toActivityPayload', () => {
-  it('combines date and time into a start timestamp', () => {
-    expect(toActivityPayload(form()).start_at).toBe('2027-01-01 18:00:00')
+  /**
+   * The moment, not a wall-clock reading of it.
+   *
+   * 🔴 This used to assert `'2027-01-01 18:00:00'` — a bare local string with
+   * nothing in it to say which clock. The API reads timestamps as UTC, so
+   * 18:00 in Tashkent was stored as 18:00Z and rendered back as 23:00, moving
+   * every activity five hours into the evening. Both endpoints now go as UTC
+   * ISO-8601, which is unambiguous in a way a space-separated string cannot be.
+   */
+  it('sends both endpoints as UTC instants, not wall-clock strings', () => {
+    const payload = toActivityPayload(form())
+
+    expect(payload.start_at).toBe(new Date('2027-01-01T18:00').toISOString())
+    expect(payload.ends_at).toBe(new Date('2027-01-01T20:00').toISOString())
+
+    // Whatever zone this test runs in, the two must round-trip to the local
+    // times that were typed.
+    expect(new Date(payload.start_at).getHours()).toBe(18)
+    expect(new Date(payload.ends_at).getHours()).toBe(20)
+  })
+
+  /** 23:00 to 01:00 is a two-hour activity, not a minus-twenty-two-hour one. */
+  it('reads an end past midnight as the next day', () => {
+    const payload = toActivityPayload(form({ time: '23:00', end_time: '01:00' }))
+
+    expect(new Date(payload.ends_at).getTime() - new Date(payload.start_at).getTime()).toBe(
+      2 * 60 * 60 * 1000,
+    )
   })
 
   it('trims text and drops an empty description', () => {
@@ -95,9 +120,9 @@ describe('toActivityPayload', () => {
     expect(toActivityPayload(form({ payment_type: 'shared_cost', amount: 50000 })).amount).toBe(50000)
   })
 
-  it('omits an unset duration rather than sending zero', () => {
-    expect(toActivityPayload(form({ duration_minutes: '' })).duration_minutes).toBeUndefined()
-    expect(toActivityPayload(form({ duration_minutes: '90' })).duration_minutes).toBe(90)
+  /** The cover image is gone — nothing in the payload should mention one. */
+  it('sends no image field at all', () => {
+    expect(toActivityPayload(form())).not.toHaveProperty('image')
   })
 })
 
@@ -114,6 +139,33 @@ describe('validateActivityForm', () => {
     expect(Object.keys(errors).sort()).toEqual(
       ['category_id', 'location_name', 'region_id', 'title'].sort(),
     )
+  })
+
+  it('requires an end time', () => {
+    expect(validateActivityForm(form({ end_time: '' })).ends_at).toBeTruthy()
+  })
+
+  /** Mirrors ValidatesActivityDetails::assertEndFollowsStart(). */
+  it('refuses an activity shorter than the floor', () => {
+    expect(validateActivityForm(form({ time: '18:00', end_time: '18:05' })).ends_at).toBeTruthy()
+  })
+
+  /**
+   * The 24-hour ceiling is unreachable from this form, by construction.
+   *
+   * There is one date field and two times, so the longest expressible activity
+   * is 00:00 to 23:59 — 1439 minutes, one short of the limit. The rule still
+   * exists and is still enforced, on the server, where the API takes two full
+   * timestamps and a caller that is not this form can exceed it. Asserted here
+   * so that a later change adding an end DATE does not quietly ship without
+   * the ceiling being checked again.
+   */
+  it('cannot express an activity longer than a day, so the ceiling never fires', () => {
+    expect(validateActivityForm(form({ time: '00:00', end_time: '23:59' })).ends_at).toBeUndefined()
+  })
+
+  it('accepts a normal two-hour evening', () => {
+    expect(validateActivityForm(form({ time: '18:00', end_time: '20:00' })).ends_at).toBeUndefined()
   })
 
   it('refuses a start time in the past', () => {
@@ -170,7 +222,7 @@ describe('fromActivity', () => {
 
   /** Loading then saving without touching anything must not change the value. */
   it('round-trips through the payload unchanged', () => {
-    const original = form({ duration_minutes: 90, payment_type: 'shared_cost', amount: 30000 })
+    const original = form({ payment_type: 'shared_cost', amount: 30000 })
     const payload = toActivityPayload(original)
 
     const state = fromActivity({
@@ -179,14 +231,44 @@ describe('fromActivity', () => {
       category: { id: payload.category_id, name: 'X', slug: 'sport', icon: null },
       location_name: payload.location_name,
       location: { region: { id: payload.region_id, name: 'R', code: 'C' }, district: null },
-      start_at: new Date('2027-01-01T18:00:00').toISOString(),
-      duration_minutes: payload.duration_minutes ?? null,
+      start_at: payload.start_at,
+      ends_at: payload.ends_at,
+      duration_minutes: 120,
       people_needed: payload.people_needed,
       payment_type: payload.payment_type,
       amount: payload.amount,
     } as unknown as Activity)
 
     expect(toActivityPayload(state)).toEqual(payload)
+  })
+
+  /**
+   * The inverse of the timezone fix, asserted end to end.
+   *
+   * A UTC instant read into the form must produce the LOCAL times a person
+   * would recognise, and sending them back must produce the same instant.
+   */
+  it('reads UTC instants back into local form fields', () => {
+    const start = new Date('2027-03-05T09:30')
+    const end = new Date('2027-03-05T11:00')
+
+    const state = fromActivity({
+      title: 'X',
+      description: null,
+      category: { id: 1, name: 'X', slug: 'sport', icon: null },
+      location_name: 'Tashkent',
+      location: { region: { id: 1, name: 'R', code: 'C' }, district: null },
+      start_at: start.toISOString(),
+      ends_at: end.toISOString(),
+      duration_minutes: 90,
+      people_needed: 1,
+      payment_type: 'free',
+      amount: 0,
+    } as unknown as Activity)
+
+    expect(state.time).toBe('09:30')
+    expect(state.end_time).toBe('11:00')
+    expect(toActivityPayload(state).start_at).toBe(start.toISOString())
   })
 })
 
@@ -245,7 +327,7 @@ describe('emptyActivityForm', () => {
     expect(blank.latitude).toBeNull()
     expect(blank.longitude).toBeNull()
     expect(blank.people_needed).toBe(1)
-    expect(blank.image).toBeNull()
+    expect(blank).not.toHaveProperty('image')
   })
 })
 
@@ -266,13 +348,13 @@ describe('validateActivityForm — the rules the server also enforces', () => {
   })
 
   it('refuses a duration outside the accepted range', () => {
-    expect(validateActivityForm(form({ duration_minutes: 5 })).duration_minutes).toBeDefined()
-    expect(validateActivityForm(form({ duration_minutes: 2000 })).duration_minutes).toBeDefined()
-    expect(validateActivityForm(form({ duration_minutes: 90 })).duration_minutes).toBeUndefined()
+    expect(validateActivityForm(form({ time: '18:00', end_time: '18:05' })).ends_at).toBeDefined()
+    expect(validateActivityForm(form({ time: '18:00', end_time: '19:30' })).ends_at).toBeUndefined()
   })
 
-  it('accepts no duration at all — it is optional', () => {
-    expect(validateActivityForm(form({ duration_minutes: '' })).duration_minutes).toBeUndefined()
+  /** The end is required now: an activity with no end is not schedulable. */
+  it('no longer treats the end as optional', () => {
+    expect(validateActivityForm(form({ end_time: '' })).ends_at).toBeDefined()
   })
 
   it('refuses a title that is too short to mean anything', () => {

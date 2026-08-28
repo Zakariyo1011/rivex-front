@@ -37,6 +37,14 @@ const ALLOWED = new Set([
   'views/settings/SettingsView.vue',
   'views/profile/ProfileView.vue',
   'views/admin/UsersView.vue',
+
+  // KYC review. An admin deciding whether a passport belongs to the person who
+  // sent it is the case where a contact number is the subject rather than
+  // incidental detail — it is how support reaches somebody about a rejected
+  // document. Admin-only on both sides: `UserResource` withholds `phone` from
+  // everyone but its owner and an AdminUser, so a non-admin loading this screen
+  // would render nothing here even if they reached it.
+  'views/admin/VerificationsView.vue',
 ])
 
 /**

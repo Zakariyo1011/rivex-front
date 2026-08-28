@@ -14,9 +14,10 @@ import { extractErrorMessage, extractFieldErrors } from '@/composables/useApiErr
 import { useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/auth'
 import { activityStatus } from '@/lib/statusLabels'
-import { formatMoney } from '@/lib/datetime'
+import { formatDuration, formatMoney } from '@/lib/datetime'
 import { icons } from '@/lib/icons'
 import {
+  formDurationMinutes,
   emptyActivityForm,
   fromActivity,
   guidanceFor,
@@ -118,6 +119,19 @@ function onRootCategoryChange() {
 }
 
 const localErrors = computed(() => validateActivityForm(form, { minPeople: minPeople.value }))
+
+/** "18:00 — 20:00 · 2 soat", once both ends are set and agree. */
+const timeRangeLabel = computed(() => {
+  const minutes = formDurationMinutes(form)
+
+  if (!form.time || !form.end_time || minutes === null || minutes <= 0) return null
+
+  const duration = formatDuration(minutes)
+
+  return duration
+    ? `${form.time} — ${form.end_time} · ${duration}`
+    : `${form.time} — ${form.end_time}`
+})
 const isValid = computed(() => Object.keys(localErrors.value).length === 0)
 
 /** Server errors win — they are the authority — then the local advisory ones. */
@@ -268,20 +282,35 @@ onMounted(load)
           <AppCard>
             <h2 class="font-semibold text-ink mb-4">Sana va vaqt</h2>
 
-            <div class="grid grid-cols-2 gap-3">
-              <AppInput v-model="form.date" label="Sana" type="date" :error="errorFor('start_at')" />
-              <AppInput v-model="form.time" label="Vaqt" type="time" />
+            <AppInput v-model="form.date" label="Sana" type="date" :error="errorFor('start_at')" />
+
+            <!-- Start and end, the same pair the create wizard collects and the
+                 same pair the API stores. Editing is one page rather than a
+                 wizard, but the MEANING of a field must not differ between the
+                 two screens — see lib/activityForm. -->
+            <div class="grid grid-cols-2 gap-3 mt-3">
+              <AppInput
+                v-model="form.time"
+                label="Boshlanish vaqti"
+                type="time"
+                data-testid="activity-start-time"
+              />
+              <AppInput
+                v-model="form.end_time"
+                label="Tugash vaqti"
+                type="time"
+                data-testid="activity-end-time"
+                :error="errorFor('ends_at')"
+              />
             </div>
 
-            <AppInput
-              v-model="form.duration_minutes"
-              label="Davomiyligi (daqiqa)"
-              type="number"
-              inputmode="numeric"
-              placeholder="Masalan: 90"
-              class="mt-3"
-              :error="errorFor('duration_minutes')"
-            />
+            <p
+              v-if="timeRangeLabel && !errorFor('ends_at')"
+              class="mt-2 text-sm text-ink-muted flex items-center gap-2"
+            >
+              <FontAwesomeIcon :icon="icons.time" class="text-ink-faint" />
+              {{ timeRangeLabel }}
+            </p>
           </AppCard>
 
           <!-- 3. Location -->
@@ -298,7 +327,6 @@ onMounted(load)
               v-model:location-name="form.location_name"
               :latitude="form.latitude"
               :longitude="form.longitude"
-              :placeholder="guidance.titleHint ? 'Masalan: Magic City, 2-qavat' : undefined"
               :errors="{
                 region_id: errorFor('region_id'),
                 district_id: errorFor('district_id'),

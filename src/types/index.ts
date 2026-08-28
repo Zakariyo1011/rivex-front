@@ -113,14 +113,23 @@ export interface Activity {
   id: number
   title: string
   description: string | null
-  image_url: string | null
   category: Category
   location_name: string
   latitude: string | null
   longitude: string | null
   location?: ActivityLocation
+  /**
+   * Both endpoints, as UTC ISO-8601 with a `Z`.
+   *
+   * Rendered in the reader's own zone by `lib/datetime`. Never parse these with
+   * anything that ignores the suffix: the API is explicit about the zone in
+   * both directions precisely because a bare wall-clock string used to be read
+   * as UTC and shifted every activity five hours into the evening.
+   */
   start_at: string
-  duration_minutes: number | null
+  ends_at: string
+  /** Derived server-side from the pair, so it can never disagree with them. */
+  duration_minutes: number
   people_needed: number
   /** Seats taken. Present on the detail endpoint. */
   accepted_participants_count?: number
@@ -550,12 +559,24 @@ export interface Report {
  */
 export type KycStatus = 'not_verified' | 'pending' | 'verified' | 'rejected' | 'needs_review'
 
+/** The kind of document a person presents. */
 export type KycDocType = 'passport' | 'id_card'
+
+/**
+ * A stored PAGE, which is not the same thing as a document kind.
+ *
+ * A passport is one page; an ID card is two, and the back carries half of what
+ * makes it verifiable. Naming the side here is what lets an admin listing say
+ * which one it is about to open instead of inferring it from row order.
+ */
+export type KycDocPage = 'passport' | 'id_card_front' | 'id_card_back' | 'selfie'
 
 /** Metadata only — the file bytes are admin-review-only and never linked here. */
 export interface VerificationDocument {
   id: number
-  doc_type: KycDocType | 'selfie'
+  doc_type: KycDocPage
+  /** Human-readable page name, resolved server-side. */
+  label: string
   mime_type: string | null
   size_bytes: number | null
   /** Relative to the API base URL — the client prepends its own host. */
@@ -563,10 +584,37 @@ export interface VerificationDocument {
   created_at: string
 }
 
+/**
+ * What an OCR reader believed the document said.
+ *
+ * Admin-only, and evidence rather than a verdict: there is deliberately no
+ * status or score field here, because reading a document and deciding an
+ * identity are different questions and only the second one verifies anybody.
+ */
+export interface ExtractedDocument {
+  succeeded: boolean
+  first_name: string | null
+  last_name: string | null
+  document_number: string | null
+  date_of_birth: string | null
+  expires_on: string | null
+  failure_reason: string | null
+}
+
 export interface IdentityVerification {
   id: number
   status: KycStatus
   status_label: string
+  document_type: KycDocType | null
+  document_type_label: string | null
+  /** The request fields a complete submission must carry, from the server. */
+  required_pages: string[]
+  /** Which provider decided. `dev_auto` is the local test verifier. */
+  provider: string | null
+  /** Admin-only. */
+  extracted_document?: ExtractedDocument | null
+  /** Admin-only. */
+  document_reader?: string | null
   rejection_reason: string | null
   reviewed_at: string | null
   submitted_at: string | null

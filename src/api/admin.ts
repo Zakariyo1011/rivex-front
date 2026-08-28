@@ -31,6 +31,36 @@ export const adminAuthApi = {
   login(payload: { email: string; password: string }) {
     return adminClient.post<{ admin: AdminUser; token: string }>('/admin/login', payload)
   },
+
+  /**
+   * Google sign-in for the panel.
+   *
+   * Deliberately a separate endpoint family from the consumer flow, not the
+   * same one with a flag. The consumer callback CREATES an account for any
+   * Google identity that turns up — that is what a sign-up is — and the admin
+   * callback admits only identities an AdminUser row already names. Two
+   * opposite policies sharing one route is where the flag eventually gets it
+   * wrong. See App\Services\AdminGoogleAuthService.
+   */
+  googleStatus() {
+    return adminClient.get<{ data: { configured: boolean; fake: boolean } }>(
+      '/admin/auth/google/status',
+    )
+  },
+
+  googleRedirect(redirectUri: string) {
+    return adminClient.get<{ data: { url: string; state: string; expires_in: number } }>(
+      '/admin/auth/google/redirect',
+      { params: { redirect_uri: redirectUri } },
+    )
+  },
+
+  googleCallback(payload: { code?: string; state?: string; error?: string }) {
+    return adminClient.post<{ admin: AdminUser; token: string }>(
+      '/admin/auth/google/callback',
+      payload,
+    )
+  },
   logout() {
     return adminClient.post('/admin/logout')
   },

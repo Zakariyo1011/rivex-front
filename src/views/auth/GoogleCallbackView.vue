@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useAdminStore, GOOGLE_FLOW_KEY } from '@/stores/admin'
 import { extractErrorMessage } from '@/composables/useApiError'
 import { icons } from '@/lib/icons'
 
@@ -22,6 +23,7 @@ import { icons } from '@/lib/icons'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const adminStore = useAdminStore()
 
 const error = ref('')
 
@@ -31,7 +33,37 @@ onMounted(async () => {
   const googleError = route.query.error as string | undefined
 
   if (googleError) {
+    // Clear the marker too: a cancelled admin sign-in must not leave the next
+    // consumer sign-in trying to redeem at the admin endpoint.
+    sessionStorage.removeItem(GOOGLE_FLOW_KEY)
     error.value = 'Google orqali kirish bekor qilindi.'
+
+    return
+  }
+
+  /**
+   * Which sign-in this is completing.
+   *
+   * Both the consumer and the admin flow come back here, so only ONE
+   * Authorised redirect URI has to be registered in Google Cloud Console —
+   * adding a second is a step that is easy to get subtly wrong and produces a
+   * `redirect_uri_mismatch` nobody can debug from the error alone.
+   *
+   * The marker is set by whichever store began the flow, and it decides only
+   * which BACKEND endpoint the code is redeemed at. It is not a security
+   * boundary: the two flows mint states into separate server-side namespaces,
+   * so an admin state is not redeemable at the consumer callback or the other
+   * way round, whatever this browser claims.
+   */
+  const isAdminFlow = sessionStorage.getItem(GOOGLE_FLOW_KEY) === 'admin'
+
+  if (isAdminFlow) {
+    try {
+      await adminStore.completeGoogleSignIn({ code, state })
+      await router.replace({ name: 'admin-dashboard' })
+    } catch (e) {
+      error.value = extractErrorMessage(e)
+    }
 
     return
   }

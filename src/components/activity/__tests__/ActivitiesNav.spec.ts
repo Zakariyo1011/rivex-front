@@ -28,6 +28,7 @@ function makeActivity(overrides: Partial<Activity> = {}): Activity {
     category: { id: 1, name: 'Sport', slug: 'sport', icon: null },
     location_name: 'Tashkent',
     start_at: '2026-08-20T18:00:00.000Z',
+    ends_at: '2026-08-20T20:00:00.000Z',
     people_needed: 3,
     status: 'published',
     owner: { id: 9, name: 'Jasur', display_name: 'Jasur' },

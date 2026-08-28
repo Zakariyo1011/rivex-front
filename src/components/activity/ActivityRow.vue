@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { categoryIcon, icons } from '@/lib/icons'
-import { formatActivityStart } from '@/lib/datetime'
+import { formatActivityStart, formatTime } from '@/lib/datetime'
 import { activityStatus } from '@/lib/statusLabels'
 import type { Activity } from '@/types'
 
@@ -45,7 +45,7 @@ const pending = computed(() =>
       <div class="min-w-0 flex-1">
         <p class="font-semibold text-ink truncate">{{ activity.title }}</p>
         <p class="text-sm text-ink-muted truncate">
-          {{ formatActivityStart(activity.start_at) }}
+          {{ formatActivityStart(activity.start_at) }} — {{ formatTime(activity.ends_at) }}
           <template v-if="activity.location_name"> · {{ activity.location_name }}</template>
         </p>
 

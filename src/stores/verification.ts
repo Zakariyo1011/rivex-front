@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { verificationApi, type SubmitVerificationPayload } from '@/api/verification'
+import {
+  REQUIRED_PAGES,
+  verificationApi,
+  type DocumentPage,
+  type SubmitVerificationPayload,
+} from '@/api/verification'
 import { useAuthStore } from '@/stores/auth'
 import type { IdentityVerification, KycDocType } from '@/types'
 
@@ -17,8 +22,46 @@ export const useVerificationStore = defineStore('verification', () => {
   const uploadProgress = ref(0)
 
   const docType = ref<KycDocType>('passport')
-  const documentFile = ref<File | null>(null)
+
+  /**
+   * The picked pages, keyed by request field.
+   *
+   * A map rather than one `documentFile` ref because how many pages exist is a
+   * property of the document type, not of the wizard — an ID card has two and a
+   * passport has one, and a single ref could only ever hold the first.
+   */
+  const pages = ref<Partial<Record<DocumentPage, File>>>({})
   const selfieFile = ref<File | null>(null)
+
+  /** The pages this document type needs, in the order they are asked for. */
+  const requiredPages = computed<DocumentPage[]>(() => REQUIRED_PAGES[docType.value] ?? [])
+
+  /** Which required pages are still missing — drives the wizard's next step. */
+  const missingPages = computed(() => requiredPages.value.filter((page) => !pages.value[page]))
+
+  const documentsComplete = computed(() => missingPages.value.length === 0)
+
+  function setPage(page: DocumentPage, file: File | null) {
+    if (file) pages.value = { ...pages.value, [page]: file }
+    else {
+      const next = { ...pages.value }
+      delete next[page]
+      pages.value = next
+    }
+  }
+
+  /**
+   * Switching document type discards pages that belonged to the other one.
+   *
+   * Keeping them would mean an ID-card front lingering after somebody switched
+   * to passport, and being submitted as a passport data page.
+   */
+  function setDocType(value: KycDocType) {
+    if (value === docType.value) return
+
+    docType.value = value
+    pages.value = {}
+  }
 
   const status = computed(() => verification.value?.status ?? 'not_verified')
   const isVerified = computed(() => status.value === 'verified')
@@ -40,7 +83,7 @@ export const useVerificationStore = defineStore('verification', () => {
   }
 
   async function submit() {
-    if (!documentFile.value || !selfieFile.value) {
+    if (!documentsComplete.value || !selfieFile.value) {
       throw new Error('Hujjat va selfi rasmlari tanlanmagan.')
     }
 
@@ -50,7 +93,7 @@ export const useVerificationStore = defineStore('verification', () => {
     try {
       const payload: SubmitVerificationPayload = {
         doc_type: docType.value,
-        document_image: documentFile.value,
+        pages: pages.value,
         selfie_image: selfieFile.value,
       }
 
@@ -72,7 +115,7 @@ export const useVerificationStore = defineStore('verification', () => {
   }
 
   function clearFiles() {
-    documentFile.value = null
+    pages.value = {}
     selfieFile.value = null
     uploadProgress.value = 0
   }
@@ -89,7 +132,12 @@ export const useVerificationStore = defineStore('verification', () => {
     submitting,
     uploadProgress,
     docType,
-    documentFile,
+    setDocType,
+    pages,
+    setPage,
+    requiredPages,
+    missingPages,
+    documentsComplete,
     selfieFile,
     status,
     isVerified,

@@ -35,21 +35,12 @@ export interface CreateActivityPayload {
   district_id?: number
   latitude?: number
   longitude?: number
+  /** ISO-8601 in UTC, from `toApiTimestamp`. Never a bare wall-clock string. */
   start_at: string
-  duration_minutes?: number
+  ends_at: string
   people_needed: number
   payment_type: string
   amount: number
-  image?: File
-}
-
-function toFormData<T extends object>(payload: T) {
-  const formData = new FormData()
-  Object.entries(payload).forEach(([key, value]) => {
-    if (value === undefined || value === null) return
-    formData.append(key, value instanceof File ? value : String(value))
-  })
-  return formData
 }
 
 export const activitiesApi = {
@@ -67,13 +58,19 @@ export const activitiesApi = {
   mine(filter: 'owned' | 'joined' | 'all' = 'owned') {
     return client.get<{ data: Activity[] }>('/me/activities', { params: { filter } })
   },
+  /**
+   * Plain JSON, not multipart.
+   *
+   * It was multipart only because activities carried a cover image; with that
+   * gone there is no file in the payload, and JSON keeps types intact on the
+   * way over — `toFormData` stringified everything, so `people_needed` arrived
+   * as "2" and every boolean as "true".
+   */
   create(payload: CreateActivityPayload) {
-    return client.post<{ data: Activity }>('/activities', toFormData(payload))
+    return client.post<{ data: Activity }>('/activities', payload)
   },
   update(id: number, payload: Partial<CreateActivityPayload>) {
-    const formData = toFormData(payload)
-    formData.append('_method', 'PUT')
-    return client.post<{ data: Activity }>(`/activities/${id}`, formData)
+    return client.put<{ data: Activity }>(`/activities/${id}`, payload)
   },
   /** A reason is required — cancellation patterns feed the trust score. */
   cancel(id: number, reason: string, note?: string) {

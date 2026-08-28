@@ -1,4 +1,5 @@
 import { icons } from './icons'
+import { fromApiTimestamp, toApiTimestamp } from './datetime'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import type { Activity, PaymentType } from '@/types'
 
@@ -30,21 +31,38 @@ export interface ActivityFormState {
   latitude: number | null
   longitude: number | null
   date: string
+  /** When it starts, on the user's own clock. */
   time: string
-  duration_minutes: string | number
+  /**
+   * When it ends, same day, same clock.
+   *
+   * A separate field rather than a duration because a start and an end are the
+   * two facts a person actually schedules — "18:00 to 20:00" is how the plan is
+   * made, and a length is the arithmetic they would otherwise have to do to
+   * express it. The API stores both endpoints for the same reason.
+   */
+  end_time: string
   people_needed: number
   payment_type: PaymentType
   amount: number
-  /** Cover image. Optional; the API has always accepted one, nothing sent it. */
-  image: File | null
 }
 
 /** How far ahead an activity may be scheduled — mirrors the server's rule. */
 export const MAX_MONTHS_AHEAD = 12
 
-/** The bounds the server enforces on a meet-up's length. */
+/** The bounds the server enforces on a meet-up's length, measured start to end. */
 export const MIN_DURATION_MINUTES = 15
 export const MAX_DURATION_MINUTES = 1440
+
+/**
+ * How long an activity runs when the organiser has not said otherwise.
+ *
+ * Mirrors Activity::DEFAULT_DURATION_MINUTES. The form pre-fills an end time
+ * with it so the commonest case — a one-hour meet-up — needs no input at all,
+ * while still showing the value rather than hiding it behind a default nobody
+ * can see.
+ */
+export const DEFAULT_DURATION_MINUTES = 60
 
 export const MAX_PEOPLE_NEEDED = 50
 
@@ -61,11 +79,10 @@ export function emptyActivityForm(): ActivityFormState {
     longitude: null,
     date: '',
     time: '',
-    duration_minutes: '',
+    end_time: '',
     people_needed: 1,
     payment_type: 'free',
     amount: 0,
-    image: null,
   }
 }
 
@@ -83,19 +100,85 @@ export function emptyActivityForm(): ActivityFormState {
  *
  * Both halves are read from the same local clock here, so they cannot disagree.
  */
-export function defaultStartAt(now: Date = new Date()): { date: string; time: string } {
+export function defaultStartAt(
+  now: Date = new Date(),
+): { date: string; time: string; end_time: string } {
   const start = new Date(now.getTime() + 60 * 60 * 1000)
   start.setMinutes(0, 0, 0)
 
   // Rounding down could land in the past when `now` is already past the hour.
   if (start.getTime() <= now.getTime()) start.setHours(start.getHours() + 1)
 
+  // The end is suggested, not imposed: pre-filling the commonest case means a
+  // one-hour meet-up needs no input, and the value is on screen rather than
+  // being a default nobody can see or argue with.
+  const end = new Date(start.getTime() + DEFAULT_DURATION_MINUTES * 60 * 1000)
+
   const pad = (n: number) => String(n).padStart(2, '0')
 
   return {
     date: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
     time: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+    end_time: `${pad(end.getHours())}:${pad(end.getMinutes())}`,
   }
+}
+
+/**
+ * The end time implied by a start, when the user has not chosen one.
+ *
+ * Used when the start moves: an end that stays put while the start slides past
+ * it produces a form that is invalid without the user having done anything
+ * wrong, which is a worse experience than quietly keeping the gap.
+ */
+export function endTimeFor(time: string, minutes = DEFAULT_DURATION_MINUTES): string {
+  const [h, m] = time.split(':').map(Number)
+
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return ''
+
+  const at = new Date()
+  at.setHours(h!, m! + minutes, 0, 0)
+
+  const pad = (n: number) => String(n).padStart(2, '0')
+
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`
+}
+
+/**
+ * How long the form currently describes, in minutes, or null if it cannot say.
+ *
+ * Crossing midnight is read as the next day rather than as a negative length —
+ * "23:00 to 01:00" is a two-hour activity, not a minus-twenty-two-hour one.
+ */
+export function formDurationMinutes(form: ActivityFormState): number | null {
+  if (!form.date || !form.time || !form.end_time) return null
+
+  const start = new Date(`${form.date}T${form.time}`)
+  const end = new Date(`${form.date}T${form.end_time}`)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
+
+  if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1)
+
+  return Math.round((end.getTime() - start.getTime()) / 60_000)
+}
+
+/**
+ * The end as an absolute moment, resolving a midnight crossing to the next day.
+ *
+ * Shared by the payload builder and the validator so the two cannot disagree
+ * about which day an activity finishing at 01:00 ends on.
+ */
+function resolvedEnd(form: ActivityFormState): Date | null {
+  if (!form.date || !form.time || !form.end_time) return null
+
+  const start = new Date(`${form.date}T${form.time}`)
+  const end = new Date(`${form.date}T${form.end_time}`)
+
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
+
+  if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1)
+
+  return end
 }
 
 export const paymentOptions: {
@@ -203,6 +286,17 @@ export function guidanceFor(slug: string | null | undefined): CategoryGuidance {
 /** The request body, from the form state. One conversion, both screens. */
 export function toActivityPayload(form: ActivityFormState) {
   const hasPin = form.latitude !== null && form.longitude !== null
+  const start = toApiTimestamp(form.date, form.time)
+  const end = resolvedEnd(form)
+
+  // Callers submit only after `validateActivityForm` has passed, which cannot
+  // succeed with an unparseable date or a missing end — so this is unreachable
+  // in practice. It throws rather than sending `undefined` because a request
+  // missing its start time would be refused by the server with a message about
+  // a field the user did fill in, which is the worse failure of the two.
+  if (!start || !end) {
+    throw new Error('Faoliyat vaqti to\'liq emas.')
+  }
 
   return {
     title: form.title.trim(),
@@ -215,22 +309,27 @@ export function toActivityPayload(form: ActivityFormState) {
     // one would turn a helpful extra into a failed submission.
     latitude: hasPin ? form.latitude! : undefined,
     longitude: hasPin ? form.longitude! : undefined,
-    start_at: `${form.date} ${form.time}:00`,
-    duration_minutes: form.duration_minutes ? Number(form.duration_minutes) : undefined,
+    // ISO-8601 in UTC, both endpoints. NOT `${date} ${time}` — a bare
+    // wall-clock string carries no zone, and the API reading it as UTC is what
+    // used to push every activity five hours into the evening. See
+    // `toApiTimestamp`.
+    start_at: start,
+    ends_at: end.toISOString(),
     people_needed: form.people_needed,
     payment_type: form.payment_type,
     // The server rejects a non-zero amount on a free activity; sending zero
     // rather than whatever was typed before "Bepul" was picked keeps the two
     // in step without the user having to clear the field.
     amount: form.payment_type === 'free' ? 0 : Number(form.amount),
-    image: form.image ?? undefined,
   }
 }
 
 /** Fill a form from an activity being edited. */
 export function fromActivity(activity: Activity): ActivityFormState {
-  const start = new Date(activity.start_at)
-  const pad = (n: number) => String(n).padStart(2, '0')
+  // Both endpoints come back as UTC and are read into local form fields, which
+  // is the exact inverse of what `toActivityPayload` does on the way out.
+  const start = fromApiTimestamp(activity.start_at)
+  const end = fromApiTimestamp(activity.ends_at)
 
   const latitude = activity.latitude === null ? null : Number(activity.latitude)
   const longitude = activity.longitude === null ? null : Number(activity.longitude)
@@ -244,13 +343,12 @@ export function fromActivity(activity: Activity): ActivityFormState {
     district_id: activity.location?.district?.id ?? null,
     latitude: Number.isFinite(latitude) ? latitude : null,
     longitude: Number.isFinite(longitude) ? longitude : null,
-    date: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
-    time: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
-    duration_minutes: activity.duration_minutes ?? '',
+    date: start.date,
+    time: start.time,
+    end_time: end.time,
     people_needed: activity.people_needed,
     payment_type: activity.payment_type,
     amount: activity.amount ?? 0,
-    image: null,
   }
 }
 
@@ -288,7 +386,7 @@ export function validateActivityForm(
   if (!form.region_id) errors.region_id = 'Viloyatni tanlang.'
 
   if (!form.date || !form.time) {
-    errors.start_at = 'Sana va vaqtni tanlang.'
+    errors.start_at = 'Sana va boshlanish vaqtini tanlang.'
   } else {
     const startAt = new Date(`${form.date}T${form.time}`).getTime()
     const horizon = new Date()
@@ -301,13 +399,21 @@ export function validateActivityForm(
     }
   }
 
-  if (form.duration_minutes !== '' && form.duration_minutes !== null) {
-    const duration = Number(form.duration_minutes)
+  // The end is required now, and the length is a property of the pair rather
+  // than of a separate number that could contradict it. Mirrors
+  // ValidatesActivityDetails::assertEndFollowsStart() — the server is the
+  // authority and this only saves a round trip.
+  if (!form.end_time) {
+    errors.ends_at = 'Tugash vaqtini tanlang.'
+  } else if (form.date && form.time) {
+    const minutes = formDurationMinutes(form)
 
-    if (!Number.isFinite(duration) || duration < MIN_DURATION_MINUTES) {
-      errors.duration_minutes = `Kamida ${MIN_DURATION_MINUTES} daqiqa.`
-    } else if (duration > MAX_DURATION_MINUTES) {
-      errors.duration_minutes = "Ko'pi bilan 24 soat."
+    if (minutes === null) {
+      errors.ends_at = "Tugash vaqti noto'g'ri."
+    } else if (minutes < MIN_DURATION_MINUTES) {
+      errors.ends_at = `Faoliyat kamida ${MIN_DURATION_MINUTES} daqiqa davom etishi kerak.`
+    } else if (minutes > MAX_DURATION_MINUTES) {
+      errors.ends_at = "Faoliyat ko'pi bilan 24 soat davom etishi mumkin."
     }
   }
 
@@ -350,9 +456,8 @@ export const FIELD_STEP: Record<string, number> = {
   title: 1,
   category_id: 1,
   description: 1,
-  image: 1,
   start_at: 2,
-  duration_minutes: 2,
+  ends_at: 2,
   location_name: 3,
   region_id: 3,
   district_id: 3,
